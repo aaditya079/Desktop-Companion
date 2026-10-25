@@ -1628,7 +1628,7 @@ func _trigger_ambient_behavior() -> void:
 		return
 
 	var now := Time.get_time_dict_from_system()
-	var hour := now.hour
+	var hour: int = int(now.hour)
 
 	if hour >= 23 or hour < 5:
 		if ai_client and ai_client.memory_mgr:

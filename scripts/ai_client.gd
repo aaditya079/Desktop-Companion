@@ -17,15 +17,16 @@ var test_http_request: HTTPRequest
 var is_requesting: bool = false
 var is_testing: bool = false
 
+const MemoryManagerScript = preload("res://scripts/memory_manager.gd")
 var active_companion_name: String = "Camellya"
-var memory_mgr: CompanionMemoryManager
+var memory_mgr: Node
 
 var conversation_history: Array = [
 	{"role": "system", "content": "You are Camellya, an affectionate, charming anime desktop companion. Respond warmly in 35 words or less. Always stay in character."}
 ]
 
 func _ready() -> void:
-	memory_mgr = CompanionMemoryManager.new()
+	memory_mgr = MemoryManagerScript.new()
 	add_child(memory_mgr)
 
 	http_request = HTTPRequest.new()
