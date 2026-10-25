@@ -56,7 +56,36 @@ const MAX_FALL_SPEED: float = 2400.0
 @onready var btn_dock_poke: Button = $UI/QuickDock/Margin/HBox/BtnDockPoke
 @onready var btn_dock_menu: Button = $UI/QuickDock/Margin/HBox/BtnDockMenu
 
+# Focus Timer Widget & Audio
+@onready var sfx_player: AudioStreamPlayer = $SFXPlayer
+@onready var focus_widget: PanelContainer = $UI/FocusTimerWidget
+@onready var focus_label: Label = $UI/FocusTimerWidget/Margin/HBox/TimerLabel
+@onready var btn_stop_focus: Button = $UI/FocusTimerWidget/Margin/HBox/BtnStopTimer
+
+# Context Menu Extra Buttons
+@onready var ctx_focus: Button = $UI/ContextMenu/Margin/VBox/BtnFocus
+@onready var ctx_sound: Button = $UI/ContextMenu/Margin/VBox/BtnSound
+@onready var ctx_scale_dropdown: OptionButton = $UI/ContextMenu/Margin/VBox/ScaleDropdown
+
 var gravity_enabled: bool = true
+var sound_enabled: bool = true
+var current_scale_multiplier: float = 1.0
+
+# Focus Mode state
+var focus_active: bool = false
+var focus_time_left: float = 1500.0 # 25 min default
+
+# Shake & Dizzy Physics
+var shake_energy: float = 0.0
+var prev_drag_vel_x: float = 0.0
+var is_dizzy: bool = false
+var dizzy_timer: float = 0.0
+
+# Hydration & Health Check-in
+var hydration_timer: float = 2700.0 # 45 minutes
+
+# Procedural Audio Cache
+var sfx_library: Dictionary = {}
 
 # Live2D Parameters Map
 var param_map: Dictionary = {}
@@ -220,9 +249,14 @@ func _ready() -> void:
 	send_btn.pressed.connect(func(): _on_input_submitted(input_box.text))
 	
 	ctx_talk.pressed.connect(_toggle_chat_input)
+	ctx_focus.pressed.connect(_toggle_focus_timer)
 	ctx_gravity.pressed.connect(_toggle_gravity)
+	ctx_sound.pressed.connect(_toggle_sound)
 	ctx_settings.pressed.connect(_open_settings)
 	ctx_quit.pressed.connect(func(): get_tree().quit())
+
+	# Connect Focus Widget Stop Button
+	btn_stop_focus.pressed.connect(func(): _stop_focus_timer(false))
 
 	# Connect Emote Buttons
 	btn_emote_happy.pressed.connect(func(): play_emote("happy"))
@@ -243,6 +277,17 @@ func _ready() -> void:
 		ctx_model_dropdown.add_item(model_list[i].name, i)
 	ctx_model_dropdown.selected = current_model_idx
 	ctx_model_dropdown.item_selected.connect(_on_model_selected)
+
+	# Setup scale dropdown
+	ctx_scale_dropdown.clear()
+	ctx_scale_dropdown.add_item("100% (Standard)", 0)
+	ctx_scale_dropdown.add_item("85% (Compact)", 1)
+	ctx_scale_dropdown.add_item("118% (Large)", 2)
+	ctx_scale_dropdown.selected = 0
+	ctx_scale_dropdown.item_selected.connect(_on_scale_selected)
+
+	# Initialize procedural audio cache
+	_init_sfx()
 
 	save_btn.pressed.connect(_on_settings_save)
 	close_btn.pressed.connect(func(): settings_panel.visible = false; update_passthrough())
@@ -306,6 +351,20 @@ func update_passthrough() -> void:
 func _process(delta: float) -> void:
 	anim_time += delta
 
+	# Focus Timer countdown
+	if focus_active:
+		focus_time_left -= delta
+		_update_focus_label()
+		if focus_time_left <= 0.0:
+			_stop_focus_timer(true)
+
+	# Periodic Ergonomic & Hydration Reminder
+	hydration_timer -= delta
+	if hydration_timer <= 0.0:
+		hydration_timer = 2700.0
+		say("Friendly check-in! 💧 Have you taken a sip of water or stretched recently? Let's take a quick 1-minute break!", "happy")
+		play_sfx("chime")
+
 	# Track mouse drag velocity for toss throw inertia
 	if dragging:
 		var curr_mouse = DisplayServer.mouse_get_position()
@@ -313,8 +372,24 @@ func _process(delta: float) -> void:
 			var instant_vel = Vector2(curr_mouse - prev_mouse_pos) / delta
 			drag_velocity = drag_velocity.lerp(instant_vel, delta * 12.0)
 		prev_mouse_pos = curr_mouse
+
+		# Shake detection for dizzy reaction
+		if abs(drag_velocity.x) > 850.0 and (drag_velocity.x * prev_drag_vel_x < -20000.0):
+			shake_energy += delta * 5.0
+		else:
+			shake_energy = max(0.0, shake_energy - delta * 1.5)
+		prev_drag_vel_x = drag_velocity.x
+
+		if shake_energy >= 2.0 and not is_dizzy:
+			is_dizzy = true
+			dizzy_timer = 3.2
+			shake_energy = 0.0
+			say("Whoaaa! Stop shaking me, my head is spinning! (@_@)", "surprised")
+			play_sfx("sparkle")
 	else:
 		prev_mouse_pos = Vector2i.ZERO
+		shake_energy = max(0.0, shake_energy - delta * 2.5)
+		prev_drag_vel_x = 0.0
 
 	# Gravity & Dropping down with toss horizontal momentum
 	if gravity_enabled and is_falling and not dragging:
@@ -359,10 +434,26 @@ func _process(delta: float) -> void:
 			reze_3d.set_speaking(is_speaking)
 	else:
 		# Live2D Model Active
-		if not dragging:
+		if is_dizzy:
+			dizzy_timer -= delta
+			var swirl_x = cos(anim_time * 12.0) * 0.95
+			var swirl_y = sin(anim_time * 12.0) * 0.95
+			_set_param_direct("ParamEyeBallX", swirl_x)
+			_set_param_direct("ParamEyeBallY", swirl_y)
+			_set_param_direct("ParamAngleZ", sin(anim_time * 8.0) * 16.0)
+			_set_param_direct("ParamBodyAngleX", -sin(anim_time * 8.0) * 8.0)
+			_set_param_direct("ParamCheekPuff", 0.7)
+			if dizzy_timer <= 0.0:
+				is_dizzy = false
+				say("Phew... the room finally stopped spinning!", "happy")
+		elif not dragging:
 			var diff = Vector2(mouse_global - char_global_center)
 			var target_x = clamp(diff.x / 440.0, -1.0, 1.0)
 			var target_y = clamp(-diff.y / 440.0, -1.0, 1.0)
+
+			# Proximity curiosity: pupils perk up when mouse is near
+			var dist_to_cursor = diff.length()
+			var curiosity = clamp(1.0 - (dist_to_cursor / 180.0), 0.0, 1.0)
 
 			# Add organic idle micro-sway
 			var idle_sway_z = sin(anim_time * 1.4) * 3.0
@@ -382,6 +473,9 @@ func _process(delta: float) -> void:
 			_set_param("ParamEyeBallX", target_x + idle_glance_offset, delta * 8.0)
 			_set_param("ParamEyeBallY", target_y, delta * 8.0)
 			_set_param("ParamBodyAngleX", target_x * 10.0 + idle_sway_body, delta * 4.0)
+			if curiosity > 0.05:
+				_set_param("ParamEyeLOpen", 1.0 + curiosity * 0.1, delta * 6.0)
+				_set_param("ParamEyeROpen", 1.0 + curiosity * 0.1, delta * 6.0)
 		else:
 			# Dangle / Picked-up flight physics: Body tilts into the direction of drag
 			var tilt_z = clamp(-drag_velocity.x * 0.03, -16.0, 16.0)
@@ -489,6 +583,7 @@ func _input(event: InputEvent) -> void:
 		if context_menu.visible and context_menu.get_global_rect().has_point(event.position): return
 		if settings_panel.visible and settings_panel.get_global_rect().has_point(event.position): return
 		if quick_dock.visible and quick_dock.get_global_rect().has_point(event.position): return
+		if focus_widget.visible and focus_widget.get_global_rect().has_point(event.position): return
 
 		# RIGHT-CLICK: Context Menu
 		if event.button_index == MOUSE_BUTTON_RIGHT and event.pressed:
@@ -558,6 +653,8 @@ func _trigger_landing_bounce() -> void:
 	# Settle back to original scale
 	tween.tween_property(target_node, "scale", base_scale, 0.1).set_trans(Tween.TRANS_SINE)
 	
+	play_sfx("pop")
+
 	# Magical landing sparkle stars burst
 	if sparkle_particles:
 		sparkle_particles.position = Vector2(240, 680)
@@ -565,6 +662,7 @@ func _trigger_landing_bounce() -> void:
 		sparkle_particles.emitting = true
 
 func _handle_character_tap(click_pos: Vector2) -> void:
+	play_sfx("pop")
 	# Multi-zone poke physics based on click Y coordinate
 	if click_pos.y < 280:
 		# Head zone: Affectionate headpat / stroke
@@ -618,6 +716,7 @@ func play_emote(emote_type: String) -> void:
 			_set_param_direct("ParamMouthForm", 1.0)
 			_set_param_direct("ParamCheekPuff", 0.5)
 			say("I'm having so much fun being here with you! (≧◡≦)", "happy")
+			play_sfx("chime")
 		"blush":
 			heart_particles.position = Vector2(240, 240)
 			heart_particles.restart()
@@ -625,15 +724,18 @@ func play_emote(emote_type: String) -> void:
 			_set_param_direct("ParamCheekPuff", 1.0)
 			_set_param_direct("ParamEyeBallY", -0.3)
 			say("(⁄ ⁄>⁄ ▽ ⁄<⁄ ⁄) S-stop staring so intently...!", "blush")
+			play_sfx("pop")
 		"curious":
 			_set_param_direct("ParamAngleZ", 12.0)
 			_set_param_direct("ParamEyeBallX", 0.4)
 			say("Hmm? What are you working on right now? Tell me!", "curious")
+			play_sfx("pop")
 		"sparkle":
 			sparkle_particles.position = Vector2(240, 400)
 			sparkle_particles.restart()
 			sparkle_particles.emitting = true
 			say("✨ Let's do our absolute best today! You got this! ✨", "happy")
+			play_sfx("cheer")
 
 func _cycle_next_model() -> void:
 	var next_idx = (current_model_idx + 1) % model_list.size()
@@ -667,7 +769,7 @@ func _on_model_selected(idx: int) -> void:
 		reze_container.visible = false
 		live2d_model.visible = true
 		live2d_model.assets = info.path
-		live2d_model.scale = info.scale
+		live2d_model.scale = info.scale * current_scale_multiplier
 		live2d_model.position = info.pos
 		
 		param_map.clear()
@@ -681,6 +783,7 @@ func _on_model_selected(idx: int) -> void:
 		sparkle_particles.emitting = true
 
 	say("Switched to " + info.name + "!", "neutral")
+	play_sfx("sparkle")
 	context_menu.visible = false
 	update_passthrough()
 
@@ -718,6 +821,8 @@ func say(text: String, _expression: String = "neutral") -> void:
 	var tween = create_tween().set_parallel(true)
 	tween.tween_property(bubble_panel, "modulate:a", 1.0, 0.16)
 	tween.tween_property(bubble_container, "scale", Vector2.ONE, 0.22).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+
+	play_sfx("pop")
 
 	bubble_hide_timer = max(5.0, text.length() * 0.09)
 	is_speaking = true
@@ -760,3 +865,126 @@ func _on_settings_save() -> void:
 	settings_panel.visible = false
 	say("Settings saved successfully! Ready to chat.", "neutral")
 	update_passthrough()
+
+# ==============================================================================
+# Procedural Audio Synthesizer (Zero external dependencies)
+# ==============================================================================
+func _init_sfx() -> void:
+	sfx_library["pop"] = _synthesize_tone(720.0, 360.0, 0.06, 0.22)
+	sfx_library["chime"] = _synthesize_tone(523.25, 659.25, 0.15, 0.20)
+	sfx_library["sparkle"] = _synthesize_tone(880.0, 1318.5, 0.16, 0.18)
+	sfx_library["cheer"] = _synthesize_arpeggio([523.25, 659.25, 783.99, 1046.5], 0.32, 0.22)
+
+func _synthesize_tone(freq_start: float, freq_end: float, duration: float, volume: float) -> AudioStreamWAV:
+	var sample_rate = 22050
+	var num_samples = int(sample_rate * duration)
+	var byte_array = PackedByteArray()
+	byte_array.resize(num_samples * 2)
+	for i in range(num_samples):
+		var t = float(i) / sample_rate
+		var progress = t / duration
+		var freq = lerp(freq_start, freq_end, progress)
+		var envelope = sin(progress * PI)
+		var val = sin(TAU * freq * t) * envelope * volume
+		var int_val = int(clamp(val * 32767.0, -32768.0, 32767.0))
+		byte_array.encode_s16(i * 2, int_val)
+	var wav = AudioStreamWAV.new()
+	wav.format = AudioStreamWAV.FORMAT_16_BITS
+	wav.mix_rate = sample_rate
+	wav.data = byte_array
+	return wav
+
+func _synthesize_arpeggio(notes: Array, duration: float, volume: float) -> AudioStreamWAV:
+	var sample_rate = 22050
+	var num_samples = int(sample_rate * duration)
+	var byte_array = PackedByteArray()
+	byte_array.resize(num_samples * 2)
+	var note_duration = duration / float(notes.size())
+	for i in range(num_samples):
+		var t = float(i) / sample_rate
+		var note_idx = int(clamp(t / note_duration, 0, notes.size() - 1))
+		var freq: float = notes[note_idx]
+		var note_local_t = fmod(t, note_duration)
+		var envelope = (1.0 - note_local_t / note_duration) * (1.0 - t / duration)
+		var val = sin(TAU * freq * t) * envelope * volume
+		var int_val = int(clamp(val * 32767.0, -32768.0, 32767.0))
+		byte_array.encode_s16(i * 2, int_val)
+	var wav = AudioStreamWAV.new()
+	wav.format = AudioStreamWAV.FORMAT_16_BITS
+	wav.mix_rate = sample_rate
+	wav.data = byte_array
+	return wav
+
+func play_sfx(sfx_name: String) -> void:
+	if not sound_enabled or not sfx_player or not sfx_library.has(sfx_name): return
+	sfx_player.stream = sfx_library[sfx_name]
+	sfx_player.play()
+
+func _toggle_sound() -> void:
+	sound_enabled = not sound_enabled
+	ctx_sound.text = "🔊 Sound Effects: ON" if sound_enabled else "🔇 Sound Effects: OFF"
+	if sound_enabled:
+		play_sfx("chime")
+	context_menu.visible = false
+	update_passthrough()
+
+# ==============================================================================
+# Focus / Pomodoro Study Timer
+# ==============================================================================
+func _toggle_focus_timer() -> void:
+	if focus_active:
+		_stop_focus_timer(false)
+	else:
+		_start_focus_timer(1500.0) # 25 minutes
+
+func _start_focus_timer(seconds: float) -> void:
+	focus_active = true
+	focus_time_left = seconds
+	focus_widget.visible = true
+	ctx_focus.text = "⏱ Cancel Focus Timer"
+	_update_focus_label()
+	say("Focus Mode started! 25 minutes on the clock. You can do this! ☕", "happy")
+	play_sfx("chime")
+	context_menu.visible = false
+	update_passthrough()
+
+func _stop_focus_timer(completed: bool) -> void:
+	focus_active = false
+	focus_widget.visible = false
+	ctx_focus.text = "⏱ Focus Timer: 25m"
+	if completed:
+		say("Ding ding! ✨ Focus session completed! Fantastic job! Take a well-deserved stretch break.", "happy")
+		play_sfx("cheer")
+		if sparkle_particles:
+			sparkle_particles.position = Vector2(240, 500)
+			sparkle_particles.restart()
+			sparkle_particles.emitting = true
+	else:
+		say("Focus timer stopped. Take it easy!", "neutral")
+		play_sfx("pop")
+	update_passthrough()
+
+func _update_focus_label() -> void:
+	var total_sec = int(ceil(focus_time_left))
+	var m = total_sec / 60
+	var s = total_sec % 60
+	focus_label.text = "⏱ %02d:%02d" % [m, s]
+
+# ==============================================================================
+# Scale Presets (Compact / Standard / Large)
+# ==============================================================================
+func _on_scale_selected(idx: int) -> void:
+	match idx:
+		0: current_scale_multiplier = 1.0   # Standard 100%
+		1: current_scale_multiplier = 0.85  # Compact 85%
+		2: current_scale_multiplier = 1.18  # Large 118%
+	_apply_model_scale()
+	say("Display scale updated to %d%%!" % int(current_scale_multiplier * 100), "neutral")
+	play_sfx("pop")
+	context_menu.visible = false
+	update_passthrough()
+
+func _apply_model_scale() -> void:
+	var base = model_list[current_model_idx]
+	if base.type == "live2d":
+		live2d_model.scale = base.scale * current_scale_multiplier
