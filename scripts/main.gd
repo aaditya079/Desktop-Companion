@@ -87,6 +87,10 @@ var hydration_timer: float = 2700.0 # 45 minutes
 # Procedural Audio Cache
 var sfx_library: Dictionary = {}
 
+# System Tray IPC (UDP Server on 127.0.0.1:48291)
+var udp_server: PacketPeerUDP = null
+const UDP_PORT: int = 48291
+
 # Live2D Parameters Map
 var param_map: Dictionary = {}
 
@@ -212,6 +216,18 @@ func _ready() -> void:
 	win.borderless = true
 	win.always_on_top = true
 	get_tree().root.transparent_bg = true
+
+	# Set taskbar window icon if available
+	if FileAccess.file_exists("res://assets/app_icon.png"):
+		var icon_img = Image.load_from_file("res://assets/app_icon.png")
+		if icon_img:
+			DisplayServer.set_icon(icon_img)
+
+	# Initialize UDP IPC server for system tray launcher
+	udp_server = PacketPeerUDP.new()
+	var udp_err = udp_server.bind(UDP_PORT, "127.0.0.1")
+	if udp_err == OK:
+		print(">>> System Tray IPC listening on 127.0.0.1:%d <<<" % UDP_PORT)
 
 	# Idle optimization
 	Engine.max_fps = 30
@@ -350,6 +366,34 @@ func update_passthrough() -> void:
 
 func _process(delta: float) -> void:
 	anim_time += delta
+
+	# Poll System Tray IPC commands from DesktopCompanion.exe launcher
+	if udp_server and udp_server.get_available_packet_count() > 0:
+		var pkt = udp_server.get_packet().get_string_from_utf8().strip_edges()
+		match pkt:
+			"NEXT_MODEL":
+				_cycle_next_model()
+			"TOGGLE_CHAT":
+				_toggle_chat_input()
+			"TOGGLE_GRAVITY":
+				_toggle_gravity()
+			"TOGGLE_FOCUS":
+				_toggle_focus_timer()
+			"TOGGLE_SOUND":
+				_toggle_sound()
+			"SHOW_WINDOW":
+				get_window().show()
+				get_window().always_on_top = true
+			"HIDE_WINDOW":
+				get_window().hide()
+			"TOGGLE_WINDOW":
+				if get_window().visible:
+					get_window().hide()
+				else:
+					get_window().show()
+					get_window().always_on_top = true
+			"QUIT":
+				get_tree().quit()
 
 	# Focus Timer countdown
 	if focus_active:
