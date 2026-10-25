@@ -23,6 +23,7 @@ namespace DesktopCompanionLauncher
         private const int UDP_PORT = 48291;
         private static Mutex singleInstanceMutex;
         private static string appDir;
+        private static Process pythonBackendProcess = null;
 
         [STAThread]
         static void Main()
@@ -232,6 +233,7 @@ namespace DesktopCompanionLauncher
                     Application.Exit();
                 };
 
+                EnsureBackendRunning();
                 engineProcess.Start();
                 return true;
             }
@@ -239,6 +241,47 @@ namespace DesktopCompanionLauncher
             {
                 MessageBox.Show("Failed to launch companion engine:\n" + ex.Message, "Launch Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 return false;
+            }
+        }
+
+        private static void EnsureBackendRunning()
+        {
+            try
+            {
+                using (var tcp = new System.Net.Sockets.TcpClient())
+                {
+                    var ar = tcp.BeginConnect("127.0.0.1", 12393, null, null);
+                    bool success = ar.AsyncWaitHandle.WaitOne(400);
+                    if (success && tcp.Connected)
+                    {
+                        tcp.EndConnect(ar);
+                        return;
+                    }
+                }
+            }
+            catch { }
+
+            try
+            {
+                string olvDir = Path.GetFullPath(Path.Combine(appDir, "..", "Open-LLM-VTuber"));
+                if (Directory.Exists(olvDir) && File.Exists(Path.Combine(olvDir, "run_server.py")))
+                {
+                    var psi = new ProcessStartInfo();
+                    psi.FileName = "uv";
+                    psi.Arguments = "run run_server.py";
+                    psi.WorkingDirectory = olvDir;
+                    psi.UseShellExecute = false;
+                    psi.CreateNoWindow = true;
+                    psi.WindowStyle = ProcessWindowStyle.Hidden;
+
+                    pythonBackendProcess = new Process();
+                    pythonBackendProcess.StartInfo = psi;
+                    pythonBackendProcess.Start();
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine("Backend start error: " + ex.Message);
             }
         }
 
@@ -517,6 +560,11 @@ namespace DesktopCompanionLauncher
             if (engineProcess != null && !engineProcess.HasExited)
             {
                 try { engineProcess.Kill(); } catch { }
+            }
+
+            if (pythonBackendProcess != null && !pythonBackendProcess.HasExited)
+            {
+                try { pythonBackendProcess.Kill(); } catch { }
             }
 
             if (singleInstanceMutex != null)

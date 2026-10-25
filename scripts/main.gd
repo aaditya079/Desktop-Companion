@@ -72,6 +72,18 @@ const MAX_FALL_SPEED: float = 2400.0
 @onready var chat_drawer_clear: Button = $UI/ChatLogDrawer/Margin/VBox/BottomRow/BtnClearChat
 @onready var chat_drawer_open_input: Button = $UI/ChatLogDrawer/Margin/VBox/BottomRow/BtnOpenInput
 
+# Tool Execution & Security Confirmation
+@onready var tool_chip: PanelContainer = $UI/BubbleContainer/SpeechBubble/MarginContainer/VBox/ToolChip
+@onready var tool_chip_label: Label = $UI/BubbleContainer/SpeechBubble/MarginContainer/VBox/ToolChip/ToolChipMargin/ToolChipLabel
+@onready var tool_confirm_modal: PanelContainer = $UI/ToolConfirmModal
+@onready var tool_name_lbl: Label = $UI/ToolConfirmModal/Margin/VBox/ToolNameLabel
+@onready var command_text_lbl: Label = $UI/ToolConfirmModal/Margin/VBox/CodeScroll/CommandText
+@onready var btn_authorize_tool: Button = $UI/ToolConfirmModal/Margin/VBox/ActionHBox/BtnAuthorizeTool
+@onready var btn_deny_tool: Button = $UI/ToolConfirmModal/Margin/VBox/ActionHBox/BtnDenyTool
+@onready var btn_close_confirm: Button = $UI/ToolConfirmModal/Margin/VBox/HeaderHBox/BtnCloseConfirm
+var pending_tool_id: String = ""
+var is_backend_connected: bool = false
+
 var ambient_timer: float = 90.0
 
 # Comprehensive Settings Panel
@@ -399,6 +411,13 @@ func _ready() -> void:
 	ai_client.reply_received.connect(_on_ai_reply)
 	ai_client.request_failed.connect(_on_ai_error)
 	ai_client.test_completed.connect(_on_ai_test_completed)
+	ai_client.subtitle_chunk_received.connect(_on_ai_subtitle)
+	ai_client.tool_status_updated.connect(_on_ai_tool_status)
+	ai_client.backend_connection_changed.connect(_on_backend_connection_changed)
+
+	btn_authorize_tool.pressed.connect(_on_tool_authorized)
+	btn_deny_tool.pressed.connect(_on_tool_denied)
+	btn_close_confirm.pressed.connect(_on_tool_denied)
 
 	if ai_client and ai_client.memory_mgr:
 		ai_client.memory_mgr.affinity_leveled_up.connect(_on_affinity_leveled_up)
@@ -1418,7 +1437,26 @@ func say(text: String, _expression: String = "neutral") -> void:
 	bubble_hide_timer = max(5.0, text.length() * 0.09)
 	is_speaking = true
 	talk_anim_timer = min(2.5, max(1.2, text.length() * 0.04))
+	_apply_companion_expression(_expression)
 	update_passthrough()
+
+func _apply_companion_expression(expr: String) -> void:
+	if current_model_idx < model_list.size() and model_list[current_model_idx].type == "3d":
+		if reze_3d and reze_3d.mesh:
+			match expr:
+				"happy", "inlove":
+					if reze_3d.smile_shape_idx != -1: reze_3d.mesh.set_blend_shape_value(reze_3d.smile_shape_idx, 0.65)
+					if reze_3d.blush_shape_idx != -1: reze_3d.mesh.set_blend_shape_value(reze_3d.blush_shape_idx, 0.5)
+				"sad", "confused":
+					if reze_3d.smile_shape_idx != -1: reze_3d.mesh.set_blend_shape_value(reze_3d.smile_shape_idx, 0.0)
+					if reze_3d.blush_shape_idx != -1: reze_3d.mesh.set_blend_shape_value(reze_3d.blush_shape_idx, 0.1)
+				"think":
+					if reze_3d.smile_shape_idx != -1: reze_3d.mesh.set_blend_shape_value(reze_3d.smile_shape_idx, 0.1)
+				_:
+					if reze_3d.smile_shape_idx != -1: reze_3d.mesh.set_blend_shape_value(reze_3d.smile_shape_idx, 0.15)
+					if reze_3d.blush_shape_idx != -1: reze_3d.mesh.set_blend_shape_value(reze_3d.blush_shape_idx, 0.35)
+	elif live2d_model and live2d_model.has_method("set_expression"):
+		live2d_model.set_expression(expr)
 
 func _on_input_submitted(text: String) -> void:
 	var clean := text.strip_edges()
@@ -1431,15 +1469,87 @@ func _on_input_submitted(text: String) -> void:
 		_refresh_chat_drawer()
 
 func _on_ai_thinking() -> void:
-	say("Thinking...", "neutral")
+	tool_chip.visible = false
+	say("Thinking...", "think")
+
+func _on_ai_subtitle(subtitle: String, expression: String) -> void:
+	say(subtitle, expression)
+	if chat_drawer.visible:
+		_refresh_chat_drawer()
 
 func _on_ai_reply(reply: String, expression: String) -> void:
+	tool_chip.visible = false
 	say(reply, expression)
 	if chat_drawer.visible:
 		_refresh_chat_drawer()
 
 func _on_ai_error(err_msg: String) -> void:
+	tool_chip.visible = false
 	say(err_msg, "sad")
+
+func _on_ai_tool_status(tool_id: String, tool_name: String, status: String, arguments: Dictionary) -> void:
+	var lower_name = tool_name.to_lower()
+	var is_read_only = ("search" in lower_name or "time" in lower_name or "read" in lower_name or "fetch" in lower_name or "status" in lower_name)
+
+	if is_read_only:
+		tool_chip.visible = true
+		var query_summary = ""
+		if arguments.has("query"):
+			query_summary = " \"%s\"" % str(arguments["query"]).substr(0, 25)
+		elif arguments.has("text"):
+			query_summary = " \"%s\"" % str(arguments["text"]).substr(0, 25)
+		tool_chip_label.text = "🔍 %s%s..." % [tool_name.capitalize(), query_summary]
+		say("Checking %s for you..." % tool_name.capitalize(), "think")
+	else:
+		pending_tool_id = tool_id
+		tool_confirm_modal.visible = true
+		tool_name_lbl.text = "Tool: %s (Authorization Required)" % tool_name
+		var cmd_text = JSON.stringify(arguments, "  ")
+		if arguments.has("command"):
+			cmd_text = str(arguments["command"])
+		command_text_lbl.text = cmd_text
+		update_passthrough()
+		say("⚠️ Security Authorization Required to execute %s." % tool_name, "surprised")
+
+func _on_tool_authorized() -> void:
+	tool_confirm_modal.visible = false
+	update_passthrough()
+	tool_chip.visible = true
+	tool_chip_label.text = "⚙️ Executing Authorized Tool..."
+	say("Authorized! Executing command now.", "happy")
+	if ai_client.is_ws_connected:
+		var resp = {
+			"type": "tool_confirmation_response",
+			"tool_id": pending_tool_id,
+			"allowed": true
+		}
+		ai_client.ws_peer.send_text(JSON.stringify(resp))
+	pending_tool_id = ""
+
+func _on_tool_denied() -> void:
+	tool_confirm_modal.visible = false
+	update_passthrough()
+	tool_chip.visible = false
+	say("Action cancelled. Safety first! ♡", "neutral")
+	if ai_client.is_ws_connected:
+		var resp = {
+			"type": "tool_confirmation_response",
+			"tool_id": pending_tool_id,
+			"allowed": false
+		}
+		ai_client.ws_peer.send_text(JSON.stringify(resp))
+	pending_tool_id = ""
+
+func _on_backend_connection_changed(connected: bool) -> void:
+	is_backend_connected = connected
+	if connected:
+		speaker_badge.text = " ✦ %s " % model_list[current_model_idx].short_name
+		speaker_badge.add_theme_color_override("font_color", Color(1, 1, 1, 1))
+		tool_chip.visible = false
+	else:
+		speaker_badge.text = " ✦ %s (Offline) " % model_list[current_model_idx].short_name
+		speaker_badge.add_theme_color_override("font_color", Color(1.0, 0.8, 0.8))
+		say("AI engine disconnected. Reconnecting in background... I'm still right here with you! ♡", "confused")
 
 func _update_settings_ui() -> void:
 	api_key_input.text = ai_client.api_key
@@ -1590,15 +1700,115 @@ func _refresh_chat_drawer() -> void:
 		header.add_child(time_lbl)
 		vbox.add_child(header)
 
-		var body_lbl = Label.new()
-		body_lbl.text = str(entry.get("content", ""))
-		body_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		body_lbl.add_theme_font_size_override("font_size", 11)
-		body_lbl.add_theme_color_override("font_color", Color(0.12, 0.12, 0.16))
-		vbox.add_child(body_lbl)
+		_render_message_content(vbox, str(entry.get("content", "")), is_user)
 
 		row.add_child(vbox)
 		chat_drawer_list.add_child(row)
+
+func _render_message_content(parent: VBoxContainer, text: String, _is_user: bool) -> void:
+	if not "```" in text:
+		var rich_lbl = RichTextLabel.new()
+		rich_lbl.bbcode_enabled = true
+		rich_lbl.fit_content = true
+		rich_lbl.scroll_active = false
+		rich_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		rich_lbl.text = _format_simple_markdown(text)
+		rich_lbl.add_theme_font_size_override("normal_font_size", 11)
+		rich_lbl.add_theme_color_override("default_color", Color(0.12, 0.12, 0.16))
+		parent.add_child(rich_lbl)
+		return
+
+	var parts = text.split("```")
+	for i in range(parts.size()):
+		var part = parts[i]
+		if part.strip_edges().is_empty():
+			continue
+
+		if i % 2 == 0:
+			var rich_lbl = RichTextLabel.new()
+			rich_lbl.bbcode_enabled = true
+			rich_lbl.fit_content = true
+			rich_lbl.scroll_active = false
+			rich_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+			rich_lbl.text = _format_simple_markdown(part)
+			rich_lbl.add_theme_font_size_override("normal_font_size", 11)
+			rich_lbl.add_theme_color_override("default_color", Color(0.12, 0.12, 0.16))
+			parent.add_child(rich_lbl)
+		else:
+			var lines = part.split("\n", true, 1)
+			var lang = lines[0].strip_edges() if lines.size() > 1 else ""
+			var code_content = lines[1] if lines.size() > 1 else lines[0]
+			_add_copyable_code_block(parent, code_content, lang)
+
+func _add_copyable_code_block(parent: VBoxContainer, code_text: String, lang: String) -> void:
+	var code_card = PanelContainer.new()
+	var code_style = StyleBoxFlat.new()
+	code_style.bg_color = Color(0.12, 0.14, 0.18, 0.98)
+	code_style.border_color = Color(0.28, 0.32, 0.40, 1.0)
+	code_style.border_width_left = 1
+	code_style.border_width_top = 1
+	code_style.border_width_right = 1
+	code_style.border_width_bottom = 1
+	code_style.corner_radius_top_left = 6
+	code_style.corner_radius_top_right = 6
+	code_style.corner_radius_bottom_left = 6
+	code_style.corner_radius_bottom_right = 6
+	code_style.content_margin_left = 10
+	code_style.content_margin_right = 10
+	code_style.content_margin_top = 6
+	code_style.content_margin_bottom = 8
+	code_card.add_theme_stylebox_override("panel", code_style)
+
+	var code_vbox = VBoxContainer.new()
+	code_vbox.add_theme_constant_override("separation", 4)
+
+	var header = HBoxContainer.new()
+	var lang_lbl = Label.new()
+	lang_lbl.text = (lang if not lang.is_empty() else "code").to_upper()
+	lang_lbl.add_theme_font_size_override("font_size", 9)
+	lang_lbl.add_theme_color_override("font_color", Color(0.65, 0.70, 0.85))
+	lang_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	header.add_child(lang_lbl)
+
+	var copy_btn = Button.new()
+	copy_btn.text = "📋 Copy"
+	copy_btn.flat = true
+	copy_btn.add_theme_font_size_override("font_size", 9)
+	copy_btn.add_theme_color_override("font_color", Color(0.85, 0.90, 1.0))
+	copy_btn.pressed.connect(func():
+		DisplayServer.clipboard_set(code_text.strip_edges())
+		copy_btn.text = "✓ Copied!"
+		get_tree().create_timer(2.0).timeout.connect(func():
+			if is_instance_valid(copy_btn):
+				copy_btn.text = "📋 Copy"
+		)
+	)
+	header.add_child(copy_btn)
+	code_vbox.add_child(header)
+
+	var code_lbl = Label.new()
+	code_lbl.text = code_text.strip_edges()
+	code_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	code_lbl.add_theme_font_size_override("font_size", 10)
+	code_lbl.add_theme_color_override("font_color", Color(0.92, 0.96, 1.0))
+	code_vbox.add_child(code_lbl)
+
+	code_card.add_child(code_vbox)
+	parent.add_child(code_card)
+
+func _format_simple_markdown(text: String) -> String:
+	var out := text
+	# Bold **text** -> [b]text[/b]
+	var bold_regex := RegEx.new()
+	bold_regex.compile("\\*\\*(.*?)\\*\\*")
+	out = bold_regex.sub(out, "[b]$1[/b]", true)
+
+	# Inline code `text` -> [code][color=#a02050]text[/color][/code]
+	var code_regex := RegEx.new()
+	code_regex.compile("`(.*?)`")
+	out = code_regex.sub(out, "[code][color=#902050]$1[/color][/code]", true)
+
+	return out
 
 func _on_chat_clear_pressed() -> void:
 	if ai_client and ai_client.memory_mgr:
