@@ -1,0 +1,268 @@
+[gd_scene load_steps=8 format=3]
+
+[ext_resource type="Script" path="res://scripts/main.gd" id="1_main"]
+[ext_resource type="PackedScene" path="res://scenes/reze_3d.tscn" id="2_reze_3d"]
+[ext_resource type="Texture2D" path="res://assets/lilith_heart.png" id="3_heart"]
+[ext_resource type="Script" path="res://scripts/ai_client.gd" id="4_ai"]
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_lilith_bubble"]
+bg_color = Color(0.06, 0.08, 0.14, 0.92)
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(0.38, 0.65, 0.98, 0.55)
+corner_radius_top_left = 16
+corner_radius_top_right = 16
+corner_radius_bottom_right = 16
+corner_radius_bottom_left = 16
+shadow_color = Color(0, 0, 0, 0.35)
+shadow_size = 6
+shadow_offset = Vector2(0, 3)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_menu"]
+bg_color = Color(0.06, 0.08, 0.14, 0.96)
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(0.38, 0.65, 0.98, 0.65)
+corner_radius_top_left = 12
+corner_radius_top_right = 12
+corner_radius_bottom_right = 12
+corner_radius_bottom_left = 12
+shadow_color = Color(0, 0, 0, 0.4)
+shadow_size = 6
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_input"]
+bg_color = Color(0.05, 0.07, 0.12, 0.94)
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(0.38, 0.65, 0.98, 0.6)
+corner_radius_top_left = 14
+corner_radius_top_right = 14
+corner_radius_bottom_right = 14
+corner_radius_bottom_left = 14
+
+[node name="Main" type="Node2D"]
+script = ExtResource("1_main")
+
+[node name="Live2DModel" type="GDCubismUserModel" parent="."]
+assets = "res://assets/live2d/camellya/camellya.model3.json"
+position = Vector2(240, 470)
+scale = Vector2(0.09, 0.09)
+
+[node name="RezeViewportContainer" type="SubViewportContainer" parent="."]
+visible = false
+offset_right = 480.0
+offset_bottom = 720.0
+stretch = true
+
+[node name="RezeViewport" type="SubViewport" parent="RezeViewportContainer"]
+transparent_bg = true
+handle_input_locally = false
+size = Vector2i(480, 720)
+render_target_update_mode = 3
+
+[node name="Reze3D" parent="RezeViewportContainer/RezeViewport" instance=ExtResource("2_reze_3d")]
+
+[node name="HeartParticles" type="CPUParticles2D" parent="."]
+position = Vector2(240, 140)
+emitting = false
+amount = 14
+lifetime = 1.3
+one_shot = true
+explosiveness = 0.85
+texture = ExtResource("3_heart")
+emission_shape = 1
+emission_sphere_radius = 26.0
+direction = Vector2(0, -1)
+spread = 38.0
+gravity = Vector2(0, -65)
+initial_velocity_min = 40.0
+initial_velocity_max = 90.0
+scale_amount_min = 0.5
+scale_amount_max = 0.95
+
+[node name="AIClient" type="Node" parent="."]
+script = ExtResource("4_ai")
+
+[node name="UI" type="CanvasLayer" parent="."]
+
+[node name="BubbleContainer" type="MarginContainer" parent="UI"]
+offset_left = 30.0
+offset_top = 22.0
+offset_right = 450.0
+offset_bottom = 120.0
+theme_override_constants/margin_left = 0
+theme_override_constants/margin_top = 0
+theme_override_constants/margin_right = 0
+theme_override_constants/margin_bottom = 0
+
+[node name="SpeechBubble" type="PanelContainer" parent="UI/BubbleContainer"]
+layout_mode = 2
+size_flags_vertical = 0
+theme_override_styles/panel = SubResource("StyleBoxFlat_lilith_bubble")
+
+[node name="MarginContainer" type="MarginContainer" parent="UI/BubbleContainer/SpeechBubble"]
+layout_mode = 2
+theme_override_constants/margin_left = 16
+theme_override_constants/margin_top = 10
+theme_override_constants/margin_right = 16
+theme_override_constants/margin_bottom = 10
+
+[node name="BubbleLabel" type="Label" parent="UI/BubbleContainer/SpeechBubble/MarginContainer"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.97, 0.98, 1, 1)
+theme_override_colors/font_shadow_color = Color(0, 0, 0, 0.75)
+theme_override_constants/shadow_offset_x = 1
+theme_override_constants/shadow_offset_y = 1
+theme_override_font_sizes/font_size = 13
+text = "..."
+horizontal_alignment = 1
+vertical_alignment = 1
+autowrap_mode = 2
+
+[node name="InputContainer" type="PanelContainer" parent="UI"]
+visible = false
+offset_left = 30.0
+offset_top = 650.0
+offset_right = 450.0
+offset_bottom = 705.0
+theme_override_styles/panel = SubResource("StyleBoxFlat_input")
+
+[node name="Margin" type="MarginContainer" parent="UI/InputContainer"]
+layout_mode = 2
+theme_override_constants/margin_left = 8
+theme_override_constants/margin_top = 4
+theme_override_constants/margin_right = 8
+theme_override_constants/margin_bottom = 4
+
+[node name="HBox" type="HBoxContainer" parent="UI/InputContainer/Margin"]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="InputBox" type="LineEdit" parent="UI/InputContainer/Margin/HBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_font_sizes/font_size = 12
+placeholder_text = "Talk (Enter)..."
+clear_button_enabled = true
+caret_blink = true
+
+[node name="SendButton" type="Button" parent="UI/InputContainer/Margin/HBox"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 12
+text = "Send"
+
+[node name="ContextMenu" type="PanelContainer" parent="UI"]
+visible = false
+offset_left = 135.0
+offset_top = 230.0
+offset_right = 345.0
+offset_bottom = 490.0
+theme_override_styles/panel = SubResource("StyleBoxFlat_menu")
+
+[node name="Margin" type="MarginContainer" parent="UI/ContextMenu"]
+layout_mode = 2
+theme_override_constants/margin_left = 10
+theme_override_constants/margin_top = 10
+theme_override_constants/margin_right = 10
+theme_override_constants/margin_bottom = 10
+
+[node name="VBox" type="VBoxContainer" parent="UI/ContextMenu/Margin"]
+layout_mode = 2
+theme_override_constants/separation = 6
+
+[node name="BtnTalk" type="Button" parent="UI/ContextMenu/Margin/VBox"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 12
+text = "💬 Talk / Chat"
+
+[node name="ModelLabel" type="Label" parent="UI/ContextMenu/Margin/VBox"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.7, 0.75, 0.85, 1)
+theme_override_font_sizes/font_size = 11
+text = "👗 Outfit / Model:"
+
+[node name="ModelDropdown" type="OptionButton" parent="UI/ContextMenu/Margin/VBox"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 12
+
+[node name="BtnGravity" type="Button" parent="UI/ContextMenu/Margin/VBox"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 12
+text = "🌍 Gravity Drop: ON"
+
+[node name="BtnSettings" type="Button" parent="UI/ContextMenu/Margin/VBox"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 12
+text = "⚙ Settings"
+
+[node name="BtnQuit" type="Button" parent="UI/ContextMenu/Margin/VBox"]
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 0.45, 0.45, 1)
+theme_override_font_sizes/font_size = 12
+text = "❌ Exit"
+
+[node name="SettingsPanel" type="PanelContainer" parent="UI"]
+visible = false
+offset_left = 30.0
+offset_top = 250.0
+offset_right = 450.0
+offset_bottom = 540.0
+theme_override_styles/panel = SubResource("StyleBoxFlat_menu")
+
+[node name="Margin" type="MarginContainer" parent="UI/SettingsPanel"]
+layout_mode = 2
+theme_override_constants/margin_left = 14
+theme_override_constants/margin_top = 12
+theme_override_constants/margin_right = 14
+theme_override_constants/margin_bottom = 12
+
+[node name="VBox" type="VBoxContainer" parent="UI/SettingsPanel/Margin"]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="Title" type="Label" parent="UI/SettingsPanel/Margin/VBox"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.38, 0.72, 1, 1)
+theme_override_font_sizes/font_size = 14
+text = "AI Companion Settings"
+
+[node name="ProviderLabel" type="Label" parent="UI/SettingsPanel/Margin/VBox"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.7, 0.75, 0.82, 1)
+theme_override_font_sizes/font_size = 11
+text = "Provider Preset:"
+
+[node name="ProviderOption" type="OptionButton" parent="UI/SettingsPanel/Margin/VBox"]
+layout_mode = 2
+
+[node name="KeyLabel" type="Label" parent="UI/SettingsPanel/Margin/VBox"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.7, 0.75, 0.82, 1)
+theme_override_font_sizes/font_size = 11
+text = "API Key (Empty for built-in brain):"
+
+[node name="KeyInput" type="LineEdit" parent="UI/SettingsPanel/Margin/VBox"]
+layout_mode = 2
+placeholder_text = "gsk_... or sk-..."
+secret = true
+clear_button_enabled = true
+
+[node name="HBox" type="HBoxContainer" parent="UI/SettingsPanel/Margin/VBox"]
+layout_mode = 2
+theme_override_constants/separation = 10
+
+[node name="SaveButton" type="Button" parent="UI/SettingsPanel/Margin/VBox/HBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Save"
+
+[node name="CloseButton" type="Button" parent="UI/SettingsPanel/Margin/VBox/HBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Cancel"
