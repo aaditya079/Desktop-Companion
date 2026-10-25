@@ -1,9 +1,10 @@
-[gd_scene load_steps=8 format=3]
+[gd_scene load_steps=11 format=3]
 
 [ext_resource type="Script" path="res://scripts/main.gd" id="1_main"]
 [ext_resource type="PackedScene" path="res://scenes/reze_3d.tscn" id="2_reze_3d"]
 [ext_resource type="Texture2D" path="res://assets/lilith_heart.png" id="3_heart"]
 [ext_resource type="Script" path="res://scripts/ai_client.gd" id="4_ai"]
+[ext_resource type="Texture2D" path="res://assets/sparkle.png" id="5_sparkle"]
 
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_lilith_bubble"]
 bg_color = Color(0.06, 0.08, 0.14, 0.92)
@@ -19,6 +20,33 @@ corner_radius_bottom_left = 16
 shadow_color = Color(0, 0, 0, 0.35)
 shadow_size = 6
 shadow_offset = Vector2(0, 3)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_badge"]
+bg_color = Color(0.15, 0.35, 0.75, 0.4)
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(0.38, 0.7, 1.0, 0.65)
+corner_radius_top_left = 6
+corner_radius_top_right = 6
+corner_radius_bottom_right = 6
+corner_radius_bottom_left = 6
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_dock"]
+bg_color = Color(0.05, 0.07, 0.13, 0.9)
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(0.38, 0.65, 0.98, 0.5)
+corner_radius_top_left = 18
+corner_radius_top_right = 18
+corner_radius_bottom_right = 18
+corner_radius_bottom_left = 18
+shadow_color = Color(0, 0, 0, 0.4)
+shadow_size = 6
+shadow_offset = Vector2(0, 2)
 
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_menu"]
 bg_color = Color(0.06, 0.08, 0.14, 0.96)
@@ -86,6 +114,25 @@ initial_velocity_max = 90.0
 scale_amount_min = 0.5
 scale_amount_max = 0.95
 
+[node name="SparkleParticles" type="CPUParticles2D" parent="."]
+position = Vector2(240, 680)
+emitting = false
+amount = 16
+lifetime = 0.85
+one_shot = true
+explosiveness = 0.88
+texture = ExtResource("5_sparkle")
+emission_shape = 1
+emission_sphere_radius = 28.0
+direction = Vector2(0, -1)
+spread = 65.0
+gravity = Vector2(0, -30)
+initial_velocity_min = 60.0
+initial_velocity_max = 130.0
+scale_amount_min = 0.25
+scale_amount_max = 0.6
+color = Color(1, 0.92, 0.5, 0.95)
+
 [node name="AIClient" type="Node" parent="."]
 script = ExtResource("4_ai")
 
@@ -109,11 +156,23 @@ theme_override_styles/panel = SubResource("StyleBoxFlat_lilith_bubble")
 [node name="MarginContainer" type="MarginContainer" parent="UI/BubbleContainer/SpeechBubble"]
 layout_mode = 2
 theme_override_constants/margin_left = 16
-theme_override_constants/margin_top = 10
+theme_override_constants/margin_top = 8
 theme_override_constants/margin_right = 16
 theme_override_constants/margin_bottom = 10
 
-[node name="BubbleLabel" type="Label" parent="UI/BubbleContainer/SpeechBubble/MarginContainer"]
+[node name="VBox" type="VBoxContainer" parent="UI/BubbleContainer/SpeechBubble/MarginContainer"]
+layout_mode = 2
+theme_override_constants/separation = 4
+
+[node name="SpeakerBadge" type="Label" parent="UI/BubbleContainer/SpeechBubble/MarginContainer/VBox"]
+layout_mode = 2
+size_flags_horizontal = 0
+theme_override_colors/font_color = Color(0.6, 0.88, 1, 1)
+theme_override_font_sizes/font_size = 10
+theme_override_styles/normal = SubResource("StyleBoxFlat_badge")
+text = " ✦ Camellya "
+
+[node name="BubbleLabel" type="Label" parent="UI/BubbleContainer/SpeechBubble/MarginContainer/VBox"]
 layout_mode = 2
 theme_override_colors/font_color = Color(0.97, 0.98, 1, 1)
 theme_override_colors/font_shadow_color = Color(0, 0, 0, 0.75)
@@ -121,7 +180,7 @@ theme_override_constants/shadow_offset_x = 1
 theme_override_constants/shadow_offset_y = 1
 theme_override_font_sizes/font_size = 13
 text = "..."
-horizontal_alignment = 1
+horizontal_alignment = 0
 vertical_alignment = 1
 autowrap_mode = 2
 
@@ -157,12 +216,66 @@ layout_mode = 2
 theme_override_font_sizes/font_size = 12
 text = "Send"
 
+[node name="QuickDock" type="PanelContainer" parent="UI"]
+offset_left = 125.0
+offset_top = 668.0
+offset_right = 355.0
+offset_bottom = 708.0
+theme_override_styles/panel = SubResource("StyleBoxFlat_dock")
+
+[node name="Margin" type="MarginContainer" parent="UI/QuickDock"]
+layout_mode = 2
+theme_override_constants/margin_left = 8
+theme_override_constants/margin_top = 4
+theme_override_constants/margin_right = 8
+theme_override_constants/margin_bottom = 4
+
+[node name="HBox" type="HBoxContainer" parent="UI/QuickDock/Margin"]
+layout_mode = 2
+theme_override_constants/separation = 6
+alignment = 1
+
+[node name="BtnDockChat" type="Button" parent="UI/QuickDock/Margin/HBox"]
+layout_mode = 2
+tooltip_text = "Chat (Enter)"
+theme_override_font_sizes/font_size = 13
+text = "💬"
+flat = true
+
+[node name="BtnDockOutfit" type="Button" parent="UI/QuickDock/Margin/HBox"]
+layout_mode = 2
+tooltip_text = "Switch Outfit / Model"
+theme_override_font_sizes/font_size = 13
+text = "👗"
+flat = true
+
+[node name="BtnDockGravity" type="Button" parent="UI/QuickDock/Margin/HBox"]
+layout_mode = 2
+tooltip_text = "Toggle Gravity Drop / Float Mode"
+theme_override_font_sizes/font_size = 13
+text = "🌍"
+flat = true
+
+[node name="BtnDockPoke" type="Button" parent="UI/QuickDock/Margin/HBox"]
+layout_mode = 2
+tooltip_text = "Pet / Poke"
+theme_override_font_sizes/font_size = 13
+text = "💖"
+flat = true
+
+[node name="BtnDockMenu" type="Button" parent="UI/QuickDock/Margin/HBox"]
+layout_mode = 2
+tooltip_text = "Menu / Settings"
+theme_override_font_sizes/font_size = 13
+text = "☰"
+flat = true
+
 [node name="ContextMenu" type="PanelContainer" parent="UI"]
 visible = false
-offset_left = 135.0
-offset_top = 230.0
-offset_right = 345.0
-offset_bottom = 490.0
+offset_left = 130.0
+offset_top = 210.0
+offset_right = 350.0
+offset_bottom = 510.0
 theme_override_styles/panel = SubResource("StyleBoxFlat_menu")
 
 [node name="Margin" type="MarginContainer" parent="UI/ContextMenu"]
@@ -195,6 +308,37 @@ theme_override_font_sizes/font_size = 12
 layout_mode = 2
 theme_override_font_sizes/font_size = 12
 text = "🌍 Gravity Drop: ON"
+
+[node name="EmoteLabel" type="Label" parent="UI/ContextMenu/Margin/VBox"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.7, 0.75, 0.85, 1)
+theme_override_font_sizes/font_size = 11
+text = "🎭 Quick Reactions:"
+
+[node name="EmoteRow" type="HBoxContainer" parent="UI/ContextMenu/Margin/VBox"]
+layout_mode = 2
+theme_override_constants/separation = 6
+alignment = 1
+
+[node name="BtnEmoteHappy" type="Button" parent="UI/ContextMenu/Margin/VBox/EmoteRow"]
+layout_mode = 2
+tooltip_text = "Happy"
+text = "😊"
+
+[node name="BtnEmoteBlush" type="Button" parent="UI/ContextMenu/Margin/VBox/EmoteRow"]
+layout_mode = 2
+tooltip_text = "Blush"
+text = "😳"
+
+[node name="BtnEmoteCurious" type="Button" parent="UI/ContextMenu/Margin/VBox/EmoteRow"]
+layout_mode = 2
+tooltip_text = "Curious"
+text = "🤔"
+
+[node name="BtnEmoteSparkle" type="Button" parent="UI/ContextMenu/Margin/VBox/EmoteRow"]
+layout_mode = 2
+tooltip_text = "Sparkle Cheer"
+text = "✨"
 
 [node name="BtnSettings" type="Button" parent="UI/ContextMenu/Margin/VBox"]
 layout_mode = 2
