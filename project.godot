@@ -15,8 +15,10 @@ config/windows_native_icon="res://assets/app_icon.ico"
 
 [display]
 
-window/size/viewport_width=480
+window/size/viewport_width=580
 window/size/viewport_height=720
+window/size/mode=0
+window/size/initial_position_type=0
 window/size/resizable=false
 window/size/borderless=true
 window/size/always_on_top=true
@@ -27,7 +29,6 @@ window/subwindows/embed_subwindows=false
 [rendering]
 
 textures/canvas_textures/default_texture_filter=3
-anti_aliasing/quality/msaa_2d=2
 renderer/rendering_method="gl_compatibility"
 renderer/rendering_method.mobile="gl_compatibility"
 viewport/transparent_background=true
