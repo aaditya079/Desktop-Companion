@@ -18,12 +18,16 @@ var is_requesting: bool = false
 var is_testing: bool = false
 
 var active_companion_name: String = "Camellya"
+var memory_mgr: CompanionMemoryManager
 
 var conversation_history: Array = [
 	{"role": "system", "content": "You are Camellya, an affectionate, charming anime desktop companion. Respond warmly in 35 words or less. Always stay in character."}
 ]
 
 func _ready() -> void:
+	memory_mgr = CompanionMemoryManager.new()
+	add_child(memory_mgr)
+
 	http_request = HTTPRequest.new()
 	http_request.timeout = 15.0
 	add_child(http_request)
@@ -38,13 +42,6 @@ func _ready() -> void:
 
 func set_companion_name(name: String) -> void:
 	active_companion_name = name
-	var sys_prompt = custom_system_prompt
-	if sys_prompt.strip_edges().is_empty():
-		sys_prompt = "You are %s, an affectionate, charming anime desktop companion. Respond warmly in 35 words or less. Always stay in character." % name
-	if conversation_history.size() > 0 and conversation_history[0]["role"] == "system":
-		conversation_history[0]["content"] = sys_prompt
-	else:
-		conversation_history.insert(0, {"role": "system", "content": sys_prompt})
 
 func load_config() -> void:
 	var path := "user://config.json"
@@ -150,18 +147,33 @@ func send_message(user_text: String) -> void:
 	var endpoint := get_clean_endpoint(base_url)
 	var is_local := "localhost" in endpoint or "127.0.0.1" in endpoint
 	if provider == "builtin" or (api_key.strip_edges().is_empty() and not is_local):
+		if memory_mgr:
+			memory_mgr.add_chat_message("user", user_text)
 		thinking_started.emit()
 		get_tree().create_timer(0.35).timeout.connect(func():
 			_handle_smart_dialogue(user_text)
 		)
 		return
 
+	if memory_mgr:
+		memory_mgr.add_chat_message("user", user_text)
+
 	is_requesting = true
 	thinking_started.emit()
-	conversation_history.append({"role": "user", "content": user_text})
 
-	if conversation_history.size() > 10:
-		conversation_history.remove_at(1)
+	var sys_prompt := ""
+	if memory_mgr:
+		sys_prompt = memory_mgr.build_system_prompt(active_companion_name, custom_system_prompt)
+	else:
+		sys_prompt = "You are %s, an affectionate desktop companion. Respond in 35 words or less." % active_companion_name
+
+	var messages_payload: Array = [
+		{"role": "system", "content": sys_prompt}
+	]
+	if memory_mgr:
+		messages_payload.append_array(memory_mgr.get_recent_turns(10))
+	else:
+		messages_payload.append({"role": "user", "content": user_text})
 
 	var headers: PackedStringArray = [
 		"Content-Type: application/json"
@@ -175,7 +187,7 @@ func send_message(user_text: String) -> void:
 
 	var payload := {
 		"model": model_name.strip_edges() if not model_name.strip_edges().is_empty() else "llama-3.3-70b-versatile",
-		"messages": conversation_history,
+		"messages": messages_payload,
 		"max_tokens": 120,
 		"temperature": 0.7
 	}
@@ -190,9 +202,13 @@ func _on_http_completed(result: int, response_code: int, _headers: PackedStringA
 
 	if result != HTTPRequest.RESULT_SUCCESS or response_code != 200:
 		var last_user_turn: String = ""
-		for msg in conversation_history:
-			if msg["role"] == "user":
-				last_user_turn = msg["content"]
+		if memory_mgr and memory_mgr.chat_log.size() > 0:
+			for i in range(memory_mgr.chat_log.size() - 1, -1, -1):
+				if memory_mgr.chat_log[i]["role"] == "user":
+					last_user_turn = memory_mgr.chat_log[i]["content"]
+					break
+		if last_user_turn.is_empty():
+			last_user_turn = "hello"
 		_handle_smart_dialogue(last_user_turn)
 		return
 
@@ -212,9 +228,9 @@ func _on_http_completed(result: int, response_code: int, _headers: PackedStringA
 		request_failed.emit("Empty reply received from AI.")
 		return
 
-	conversation_history.append({"role": "assistant", "content": reply})
-
 	var expression := _detect_expression(reply)
+	if memory_mgr:
+		memory_mgr.add_chat_message("assistant", reply, expression)
 	reply_received.emit(reply.strip_edges(), expression)
 
 func _detect_expression(text: String) -> String:
@@ -261,5 +277,8 @@ func _handle_smart_dialogue(user_text: String) -> void:
 		]
 		reply = default_replies[randi() % default_replies.size()]
 		expression = "neutral"
+
+	if memory_mgr:
+		memory_mgr.add_chat_message("assistant", reply, expression)
 
 	reply_received.emit(reply, expression)

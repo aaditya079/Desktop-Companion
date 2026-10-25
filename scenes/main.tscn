@@ -818,12 +818,106 @@ theme_override_colors/font_color = Color(0.2, 0.22, 0.26, 1)
 theme_override_font_sizes/font_size = 12
 text = "🌸 Current Companion: Camellya"
 
+[node name="LblAffinity" type="Label" parent="UI/MemoryPopup/Margin/VBox/StatsVBox"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.85, 0.25, 0.45, 1)
+theme_override_fonts/font = SubResource("SystemFont_pill")
+theme_override_font_sizes/font_size = 12
+text = "💖 Bond: Lv.1 Curious Screenmate (0 XP)"
+
+[node name="LblMood" type="Label" parent="UI/MemoryPopup/Margin/VBox/StatsVBox"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.2, 0.5, 0.35, 1)
+theme_override_font_sizes/font_size = 12
+text = "✨ Current Mood: Cheerful"
+
+[node name="LblFacts" type="Label" parent="UI/MemoryPopup/Margin/VBox/StatsVBox"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.4, 0.42, 0.48, 1)
+theme_override_font_sizes/font_size = 11
+text = "🧠 Remembered: Likes anime companion"
+autowrap_mode = 2
+
 [node name="Quote" type="Label" parent="UI/MemoryPopup/Margin/VBox"]
 layout_mode = 2
 theme_override_colors/font_color = Color(0.35, 0.35, 0.42, 1)
 theme_override_font_sizes/font_size = 11
 text = "“Every moment spent by your screen makes my day brighter. Thank you for keeping me company! ♡”"
 autowrap_mode = 2
+
+[node name="ChatLogDrawer" type="PanelContainer" parent="UI"]
+visible = false
+offset_left = 175.0
+offset_top = 80.0
+offset_right = 565.0
+offset_bottom = 645.0
+theme_override_styles/panel = SubResource("StyleBoxFlat_card")
+
+[node name="Margin" type="MarginContainer" parent="UI/ChatLogDrawer"]
+layout_mode = 2
+theme_override_constants/margin_left = 14
+theme_override_constants/margin_top = 12
+theme_override_constants/margin_right = 14
+theme_override_constants/margin_bottom = 12
+
+[node name="VBox" type="VBoxContainer" parent="UI/ChatLogDrawer/Margin"]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="HeaderHBox" type="HBoxContainer" parent="UI/ChatLogDrawer/Margin/VBox"]
+layout_mode = 2
+
+[node name="Title" type="Label" parent="UI/ChatLogDrawer/Margin/VBox/HeaderHBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_colors/font_color = Color(0.1, 0.1, 0.14, 1)
+theme_override_fonts/font = SubResource("SystemFont_pill")
+theme_override_font_sizes/font_size = 13
+text = "✦ Chat History & Memory ˣ"
+
+[node name="CloseChatLog" type="Button" parent="UI/ChatLogDrawer/Margin/VBox/HeaderHBox"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.3, 0.3, 0.35, 1)
+theme_override_font_sizes/font_size = 12
+text = "✕"
+flat = true
+
+[node name="AffinityTag" type="Label" parent="UI/ChatLogDrawer/Margin/VBox"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.85, 0.3, 0.5, 1)
+theme_override_font_sizes/font_size = 11
+text = "💖 Lv.1 Curious Screenmate • Mood: Cheerful"
+
+[node name="Scroll" type="ScrollContainer" parent="UI/ChatLogDrawer/Margin/VBox"]
+layout_mode = 2
+size_flags_vertical = 3
+horizontal_scroll_mode = 0
+
+[node name="MessageList" type="VBoxContainer" parent="UI/ChatLogDrawer/Margin/VBox/Scroll"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 6
+
+[node name="BottomRow" type="HBoxContainer" parent="UI/ChatLogDrawer/Margin/VBox"]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="BtnClearChat" type="Button" parent="UI/ChatLogDrawer/Margin/VBox/BottomRow"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 10
+text = "🗑 Clear"
+
+[node name="Spacer" type="Control" parent="UI/ChatLogDrawer/Margin/VBox/BottomRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="BtnOpenInput" type="Button" parent="UI/ChatLogDrawer/Margin/VBox/BottomRow"]
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_fonts/font = SubResource("SystemFont_pill")
+theme_override_font_sizes/font_size = 10
+theme_override_styles/normal = SubResource("StyleBoxFlat_card_btn")
+text = " 💬 Send Message "
 
 [node name="SettingsPanel" type="PanelContainer" parent="UI"]
 visible = false

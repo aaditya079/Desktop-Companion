@@ -60,6 +60,19 @@ const MAX_FALL_SPEED: float = 2400.0
 @onready var lbl_focus: Label = $UI/MemoryPopup/Margin/VBox/StatsVBox/LblFocus
 @onready var lbl_notes: Label = $UI/MemoryPopup/Margin/VBox/StatsVBox/LblNotes
 @onready var lbl_model: Label = $UI/MemoryPopup/Margin/VBox/StatsVBox/LblModel
+@onready var lbl_affinity: Label = $UI/MemoryPopup/Margin/VBox/StatsVBox/LblAffinity
+@onready var lbl_mood: Label = $UI/MemoryPopup/Margin/VBox/StatsVBox/LblMood
+@onready var lbl_facts: Label = $UI/MemoryPopup/Margin/VBox/StatsVBox/LblFacts
+
+# Chat History & Memory Drawer
+@onready var chat_drawer: PanelContainer = $UI/ChatLogDrawer
+@onready var chat_drawer_close: Button = $UI/ChatLogDrawer/Margin/VBox/HeaderHBox/CloseChatLog
+@onready var chat_drawer_affinity: Label = $UI/ChatLogDrawer/Margin/VBox/AffinityTag
+@onready var chat_drawer_list: VBoxContainer = $UI/ChatLogDrawer/Margin/VBox/Scroll/MessageList
+@onready var chat_drawer_clear: Button = $UI/ChatLogDrawer/Margin/VBox/BottomRow/BtnClearChat
+@onready var chat_drawer_open_input: Button = $UI/ChatLogDrawer/Margin/VBox/BottomRow/BtnOpenInput
+
+var ambient_timer: float = 90.0
 
 # Comprehensive Settings Panel
 @onready var settings_panel: PanelContainer = $UI/SettingsPanel
@@ -333,6 +346,15 @@ func _ready() -> void:
 	# Connect Memory Popup Buttons
 	btn_close_memory.pressed.connect(func(): memory_popup.visible = false; update_passthrough())
 
+	# Connect Chat History Drawer Buttons
+	chat_drawer_close.pressed.connect(func(): chat_drawer.visible = false; update_passthrough())
+	chat_drawer_clear.pressed.connect(_on_chat_clear_pressed)
+	chat_drawer_open_input.pressed.connect(func():
+		input_container.visible = true
+		input_box.grab_focus()
+		update_passthrough()
+	)
+
 	# Connect Settings Panel Controls
 	model_dropdown.clear()
 	for i in range(model_list.size()):
@@ -376,6 +398,9 @@ func _ready() -> void:
 	ai_client.request_failed.connect(_on_ai_error)
 	ai_client.test_completed.connect(_on_ai_test_completed)
 
+	if ai_client and ai_client.memory_mgr:
+		ai_client.memory_mgr.affinity_leveled_up.connect(_on_affinity_leveled_up)
+
 	_show_time_greeting()
 	update_passthrough()
 	print(">>> MAIN _READY COMPLETED <<<")
@@ -391,6 +416,7 @@ func _open_pill_menu() -> void:
 	settings_panel.visible = false
 	note_popup.visible = false
 	memory_popup.visible = false
+	chat_drawer.visible = false
 	input_container.visible = false
 
 	pill_menu.visible = true
@@ -431,12 +457,13 @@ func _close_pill_menu() -> void:
 # 9 Pill Action Handlers (Desktop Companion Original HUD)
 # ==============================================================================
 func _on_btn_snack() -> void:
-	# Action 1: Chat & Converse
+	# Action 1: Chat & Converse (Opens dialogue log drawer + quick input)
 	_close_pill_menu()
+	chat_drawer.visible = true
+	_refresh_chat_drawer()
 	input_container.visible = true
 	input_box.placeholder_text = "Talk to " + model_list[current_model_idx].short_name + " (Enter)..."
 	input_box.grab_focus()
-	say("I'm right here! What's on your mind? Tell me anything. ✦", "neutral")
 	play_sfx("chime")
 	update_passthrough()
 
@@ -475,23 +502,26 @@ func _on_btn_music() -> void:
 	say(sound_quotes.pick_random(), "happy")
 
 func _on_btn_comfort() -> void:
-	# Action 7: Gentle Care & Rest
+	# Action 7: Gentle Care, Sweet Treats & Rest
 	_close_pill_menu()
-	play_sfx("chime")
+	play_sfx("sparkle")
 	heart_particles.position = Vector2(160, 260)
 	heart_particles.restart()
 	heart_particles.emitting = true
 
-	# Soothing soft expression
-	_set_param_direct("ParamCheekPuff", 0.6)
-	_set_param_direct("ParamAngleZ", -6.0)
+	var treat_names := ["Strawberry Cake 🍰", "Boba Milk Tea 🧋", "Matcha Latte 🍵", "Sweet Macaron 🧁", "Warm Cocoa ☕"]
+	var chosen_treat: String = treat_names.pick_random()
 
-	var care_quotes := [
-		"Gentle check-in! ♡ Take a deep breath, stretch your shoulders, and drink a sip of water.",
-		"Working hard? Don't forget your posture! Roll your shoulders back and relax your eyes for a moment. ( ᴗ˳ᴗ)",
-		"I'm keeping watch right here beside you. You're doing great, remember to pace yourself! ✨"
-	]
-	say(care_quotes.pick_random(), "neutral")
+	if ai_client and ai_client.memory_mgr:
+		var mm = ai_client.memory_mgr
+		mm.total_treats_given += 1
+		mm.mood_energy = 1.0
+		mm.set_mood("affectionate")
+		var leveled = mm.add_affinity(8, "Sweet treat shared")
+		if not leveled:
+			say("Aww, %s! Thank you so much! ( ˶ᵔ ᵕ ᵔ˶ ) ♡ You're so sweet to me!" % chosen_treat, "inlove")
+	else:
+		say("Thank you for the delicious treat! ( ˶ᵔ ᵕ ᵔ˶ ) ♡", "inlove")
 
 func _on_btn_memory() -> void:
 	# Action 8: Our Journey & Stats
@@ -502,6 +532,15 @@ func _on_btn_memory() -> void:
 	lbl_focus.text = "⏱ Focus Time: %d minutes" % total_focus_minutes
 	lbl_notes.text = "📝 Saved Notes in Memory: %d" % notes.size()
 	lbl_model.text = "🌸 Current Companion: %s" % model_list[current_model_idx].short_name
+
+	if ai_client and ai_client.memory_mgr:
+		var mm = ai_client.memory_mgr
+		lbl_affinity.text = "💖 Bond: Lv.%d %s (%d XP)" % [mm.affinity_level, mm.affinity_title, mm.affinity_xp]
+		lbl_mood.text = "✨ Mood: %s (Streak %d days)" % [mm.current_mood.capitalize(), mm.daily_streak]
+		if mm.user_facts.size() > 0:
+			lbl_facts.text = "🧠 Remembered: " + ", ".join(mm.user_facts)
+		else:
+			lbl_facts.text = "🧠 Remembered: Getting to know you better with each chat!"
 	memory_popup.visible = true
 	play_sfx("sparkle")
 	update_passthrough()
@@ -808,7 +847,7 @@ func _show_and_focus() -> void:
 	sparkle_particles.restart()
 
 func update_passthrough() -> void:
-	if pill_menu.visible or settings_panel.visible or note_popup.visible or memory_popup.visible or input_container.visible or focus_widget.visible:
+	if pill_menu.visible or settings_panel.visible or note_popup.visible or memory_popup.visible or input_container.visible or focus_widget.visible or chat_drawer.visible:
 		get_window().mouse_passthrough_polygon = PackedVector2Array()
 		return
 
@@ -887,6 +926,12 @@ func _process(delta: float) -> void:
 		hydration_timer = 2700.0
 		say("Friendly check-in! 💧 Have you taken a sip of water or stretched recently? Let's take a quick 1-minute break!", "happy")
 		play_sfx("chime")
+
+	# Autonomous Ambient Proactive Behavior Loop
+	ambient_timer -= delta
+	if ambient_timer <= 0.0:
+		ambient_timer = randf_range(80.0, 140.0)
+		_trigger_ambient_behavior()
 
 	# Track mouse drag velocity for toss throw inertia
 	if dragging:
@@ -1113,6 +1158,10 @@ func _input(event: InputEvent) -> void:
 				memory_popup.visible = false
 				update_passthrough()
 				return
+			if chat_drawer.visible:
+				chat_drawer.visible = false
+				update_passthrough()
+				return
 			if input_container.visible:
 				input_container.visible = false
 				update_passthrough()
@@ -1259,6 +1308,12 @@ func _trigger_headpat(contact_pos: Vector2 = Vector2(160, 200)) -> void:
 	total_headpats += 1
 	_save_stats()
 
+	if ai_client and ai_client.memory_mgr:
+		ai_client.memory_mgr.total_headpats += 1
+		ai_client.memory_mgr.add_affinity(3, "Gentle headpat")
+		if ai_client.memory_mgr.current_mood != "affectionate":
+			ai_client.memory_mgr.set_mood("playful")
+
 	heart_particles.position = contact_pos
 	heart_particles.restart()
 	heart_particles.emitting = true
@@ -1369,12 +1424,16 @@ func _on_input_submitted(text: String) -> void:
 	input_container.visible = false
 	update_passthrough()
 	ai_client.send_message(clean)
+	if chat_drawer.visible:
+		_refresh_chat_drawer()
 
 func _on_ai_thinking() -> void:
 	say("Thinking...", "neutral")
 
 func _on_ai_reply(reply: String, expression: String) -> void:
 	say(reply, expression)
+	if chat_drawer.visible:
+		_refresh_chat_drawer()
 
 func _on_ai_error(err_msg: String) -> void:
 	say(err_msg, "sad")
@@ -1462,6 +1521,151 @@ func _on_settings_save() -> void:
 	say("Settings saved! Ready to chat with your chosen AI.", "neutral")
 	play_sfx("chime")
 	update_passthrough()
+
+# ==============================================================================
+# Chat Log Drawer & Memory Rendering
+# ==============================================================================
+func _refresh_chat_drawer() -> void:
+	if not ai_client or not ai_client.memory_mgr:
+		return
+	var mm = ai_client.memory_mgr
+	chat_drawer_affinity.text = "💖 Lv.%d %s • Mood: %s • Streak %d days" % [mm.affinity_level, mm.affinity_title, mm.current_mood.capitalize(), mm.daily_streak]
+
+	for c in chat_drawer_list.get_children():
+		c.queue_free()
+
+	if mm.chat_log.size() == 0:
+		var empty_lbl = Label.new()
+		empty_lbl.text = "No messages yet. Say hello or click 'Send Message' below!"
+		empty_lbl.add_theme_color_override("font_color", Color(0.4, 0.45, 0.55))
+		empty_lbl.add_theme_font_size_override("font_size", 11)
+		empty_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		chat_drawer_list.add_child(empty_lbl)
+		return
+
+	for entry in mm.chat_log:
+		var row = PanelContainer.new()
+		var is_user = entry.get("role", "") == "user"
+		var style = StyleBoxFlat.new()
+		style.corner_radius_top_left = 6
+		style.corner_radius_top_right = 6
+		style.corner_radius_bottom_left = 6
+		style.corner_radius_bottom_right = 6
+		style.content_margin_left = 8
+		style.content_margin_right = 8
+		style.content_margin_top = 4
+		style.content_margin_bottom = 4
+
+		if is_user:
+			style.bg_color = Color(0.92, 0.94, 0.98, 0.95)
+			style.border_color = Color(0.7, 0.78, 0.9, 1.0)
+			style.border_width_left = 2
+		else:
+			style.bg_color = Color(1.0, 1.0, 1.0, 0.98)
+			style.border_color = Color(0.88, 0.88, 0.92, 1.0)
+			style.border_width_left = 2
+		row.add_theme_stylebox_override("panel", style)
+
+		var vbox = VBoxContainer.new()
+		vbox.add_theme_constant_override("separation", 2)
+
+		var header = HBoxContainer.new()
+		var sender_lbl = Label.new()
+		sender_lbl.add_theme_font_size_override("font_size", 10)
+		if is_user:
+			sender_lbl.text = "You"
+			sender_lbl.add_theme_color_override("font_color", Color(0.2, 0.4, 0.8))
+		else:
+			sender_lbl.text = "✦ " + model_list[current_model_idx].short_name
+			sender_lbl.add_theme_color_override("font_color", Color(0.85, 0.25, 0.45))
+		header.add_child(sender_lbl)
+
+		var time_lbl = Label.new()
+		time_lbl.text = " (" + str(entry.get("timestamp", "")) + ")"
+		time_lbl.add_theme_font_size_override("font_size", 9)
+		time_lbl.add_theme_color_override("font_color", Color(0.5, 0.55, 0.65))
+		header.add_child(time_lbl)
+		vbox.add_child(header)
+
+		var body_lbl = Label.new()
+		body_lbl.text = str(entry.get("content", ""))
+		body_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		body_lbl.add_theme_font_size_override("font_size", 11)
+		body_lbl.add_theme_color_override("font_color", Color(0.12, 0.12, 0.16))
+		vbox.add_child(body_lbl)
+
+		row.add_child(vbox)
+		chat_drawer_list.add_child(row)
+
+func _on_chat_clear_pressed() -> void:
+	if ai_client and ai_client.memory_mgr:
+		ai_client.memory_mgr.clear_chat_history()
+	_refresh_chat_drawer()
+	play_sfx("pop")
+	say("Chat memory cleared! Starting a fresh chapter together. ♡", "neutral")
+
+func _on_affinity_leveled_up(new_lvl: int, title: String) -> void:
+	play_sfx("cheer")
+	heart_particles.position = Vector2(160, 200)
+	heart_particles.restart()
+	heart_particles.emitting = true
+	say("✦ Bond Level Up! We reached Lv.%d: %s! Thank you for spending time with me! ♡" % [new_lvl, title], "inlove")
+
+func _on_mood_changed(new_mood: String) -> void:
+	match new_mood:
+		"cheerful":
+			play_sfx("sparkle")
+		"affectionate":
+			play_sfx("chime")
+		"sleepy":
+			pass
+		"playful":
+			play_sfx("pop")
+
+func _trigger_ambient_behavior() -> void:
+	# Only speak unprompted if idle, not dragging, and no modal is open
+	if dragging or is_typing or bubble_panel.visible or pill_menu.visible or settings_panel.visible or chat_drawer.visible or memory_popup.visible or note_popup.visible:
+		return
+
+	var now := Time.get_time_dict_from_system()
+	var hour := now.hour
+
+	if hour >= 23 or hour < 5:
+		if ai_client and ai_client.memory_mgr:
+			ai_client.memory_mgr.set_mood("sleepy")
+		var late_quotes = [
+			"It's getting late... please don't strain your eyes, okay? ( ᴗ˳ᴗ)",
+			"Still up working? Remember to rest soon. I'm right here beside you. ♡",
+			"Yaaawn... the quiet night is cozy, but make sure you get enough sleep! ✨"
+		]
+		say(late_quotes.pick_random(), "neutral")
+		play_sfx("chime")
+	elif hour >= 6 and hour < 10:
+		if ai_client and ai_client.memory_mgr:
+			ai_client.memory_mgr.set_mood("cheerful")
+		var morning_quotes = [
+			"Good morning! Let's make today productive and bright! ☀️",
+			"A fresh new day! Take a deep breath and let's do our best. ✨",
+			"Morning sunshine! Remember your breakfast and water today! (*^‿^*)"
+		]
+		say(morning_quotes.pick_random(), "happy")
+		play_sfx("sparkle")
+	elif hour >= 12 and hour < 14:
+		var lunch_quotes = [
+			"Midday check-in! Have you had lunch yet? Don't skip meals! 🍱",
+			"Taking a quick pause? A short stretch can recharge your focus! ✦"
+		]
+		say(lunch_quotes.pick_random(), "neutral")
+		play_sfx("pop")
+	else:
+		var idle_quotes = [
+			"Watching you concentrate always motivates me! Keep going! ✨",
+			"I'm keeping watch right by your screen corner. You got this! ♡",
+			"Just admiring your workspace! Feel free to talk to me whenever you want a break.",
+			"Remember: unclench your jaw, relax your shoulders, and breathe easy~ (*^‿^*)"
+		]
+		say(idle_quotes.pick_random(), "neutral")
+		play_sfx("pop")
 
 # ==============================================================================
 # Procedural Audio Synthesizer (Zero external dependencies)
