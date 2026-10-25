@@ -96,7 +96,7 @@ var sound_enabled: bool = true
 var current_scale_multiplier: float = 1.0
 
 # OS Window Topology & Perching Engine
-var perch_enabled: bool = true
+var perch_enabled: bool = false
 var is_perching: bool = false
 var target_perch_pos: Vector2 = Vector2.ZERO
 var tracked_app_name: String = ""
@@ -238,7 +238,7 @@ var displayed_char_progress: float = 0.0
 var is_typing: bool = false
 const TYPEWRITER_SPEED: float = 40.0
 
-func get_floor_y() -> int:
+func get_usable_screen_rect() -> Rect2i:
 	var win = get_window()
 	var screen_idx = win.current_screen
 	var screen_rect := DisplayServer.screen_get_usable_rect(screen_idx)
@@ -248,7 +248,24 @@ func get_floor_y() -> int:
 			screen_rect = Rect2i(0, 0, scr_size.x, scr_size.y - 40)
 		else:
 			screen_rect = Rect2i(0, 0, 1920, 1040)
-	return screen_rect.position.y + screen_rect.size.y - win.size.y
+	return screen_rect
+
+func get_floor_y() -> int:
+	var rect = get_usable_screen_rect()
+	var win = get_window()
+	return rect.position.y + rect.size.y - win.size.y
+
+func clamp_window_pos(pos: Vector2i) -> Vector2i:
+	var rect = get_usable_screen_rect()
+	var win = get_window()
+	var min_x = rect.position.x
+	var max_x = rect.position.x + rect.size.x - win.size.x
+	var min_y = rect.position.y
+	var max_y = get_floor_y()
+	return Vector2i(
+		clampi(pos.x, min_x, max_x),
+		clampi(pos.y, min_y, max_y)
+	)
 
 func _ready() -> void:
 	print(">>> MAIN _READY STARTED <<<")
@@ -297,17 +314,10 @@ func _ready() -> void:
 		param_map[p.id] = p
 
 	# Place window in bottom right of desktop directly touching taskbar
-	var screen_idx = win.current_screen
-	var screen_rect := DisplayServer.screen_get_usable_rect(screen_idx)
-	if screen_rect.size.x <= 100 or screen_rect.size.y <= 100:
-		var scr_size = DisplayServer.screen_get_size(screen_idx)
-		if scr_size.x > 100:
-			screen_rect = Rect2i(0, 0, scr_size.x, scr_size.y - 40)
-		else:
-			screen_rect = Rect2i(0, 0, 1920, 1040)
+	var screen_rect := get_usable_screen_rect()
 	var px = screen_rect.position.x + screen_rect.size.x - win.size.x - 10
 	var py = get_floor_y()
-	win.position = Vector2i(px, py)
+	win.position = clamp_window_pos(Vector2i(px, py))
 	win.always_on_top = true
 	win.show()
 	DisplayServer.window_move_to_foreground()
@@ -716,19 +726,18 @@ func _handle_perch_packet(pkt: String) -> void:
 	var ww = int(coords[2])
 	var wh = int(coords[3])
 
-	var screen_rect = DisplayServer.screen_get_usable_rect(get_window().current_screen)
-	if screen_rect.size.x <= 100:
-		screen_rect = Rect2i(0, 0, 1920, 1040)
+	var screen_rect := get_usable_screen_rect()
+
+	# If the target window is maximized or covers almost the full screen height, do not try to climb above the monitor!
+	if wh >= screen_rect.size.y - 120 and wy <= 30:
+		return
 
 	var target_y = wy - 680
-	target_y = clamp(target_y, screen_rect.position.y, screen_rect.position.y + screen_rect.size.y - 720)
-
 	var target_x = wx + ww - 380
 	if ww < 450:
 		target_x = wx + int((ww - 580) * 0.5)
-	target_x = clamp(target_x, screen_rect.position.x, screen_rect.position.x + screen_rect.size.x - 580)
 
-	target_perch_pos = Vector2(target_x, target_y)
+	target_perch_pos = Vector2(clamp_window_pos(Vector2i(target_x, target_y)))
 	window_topology_active = true
 
 	var proc_name = parts[2] if parts.size() > 2 else ""
@@ -742,7 +751,7 @@ func _handle_perch_packet(pkt: String) -> void:
 	else:
 		var curr_pos = Vector2(get_window().position)
 		if curr_pos.distance_to(target_perch_pos) > 1.5:
-			get_window().position = Vector2i(curr_pos.lerp(target_perch_pos, 0.45))
+			get_window().position = clamp_window_pos(Vector2i(curr_pos.lerp(target_perch_pos, 0.45)))
 
 	if proc_name != tracked_app_name:
 		_on_active_window_changed(proc_name, win_title)
@@ -821,17 +830,16 @@ func _on_active_window_changed(proc_name: String, win_title: String) -> void:
 
 func _reset_to_default_position() -> void:
 	var win = get_window()
-	var screen_rect = DisplayServer.screen_get_usable_rect(win.current_screen)
-	if screen_rect.size.x <= 100:
-		screen_rect = Rect2i(0, 0, 1920, 1040)
+	var screen_rect := get_usable_screen_rect()
 	var px = screen_rect.position.x + screen_rect.size.x - win.size.x - 10
 	var py = get_floor_y()
-	win.position = Vector2i(px, py)
+	win.position = clamp_window_pos(Vector2i(px, py))
 	win.show()
 	win.always_on_top = true
 	is_falling = false
 	is_perching = false
 	fall_velocity = 0.0
+	toss_velocity_x = 0.0
 	say("I'm right here! ✦ Ready to hang out.", "happy")
 	play_sfx("chime")
 	sparkle_particles.position = Vector2(160, 500)
@@ -839,6 +847,7 @@ func _reset_to_default_position() -> void:
 
 func _show_and_focus() -> void:
 	var win = get_window()
+	win.position = clamp_window_pos(win.position)
 	win.show()
 	win.always_on_top = true
 	say("I'm right here! (Double-click me for actions)", "happy")
@@ -965,7 +974,9 @@ func _process(delta: float) -> void:
 		fall_velocity = min(fall_velocity + GRAVITY * delta, MAX_FALL_SPEED)
 
 		if abs(toss_velocity_x) > 5.0:
-			get_window().position.x += int(toss_velocity_x * delta)
+			var next_x = get_window().position.x + int(toss_velocity_x * delta)
+			var rect = get_usable_screen_rect()
+			get_window().position.x = clampi(next_x, rect.position.x, rect.position.x + rect.size.x - get_window().size.x)
 			toss_velocity_x = lerp(toss_velocity_x, 0.0, delta * 5.0)
 
 		var next_y = get_window().position.y + int(fall_velocity * delta)
@@ -974,11 +985,14 @@ func _process(delta: float) -> void:
 			is_falling = false
 			fall_velocity = 0.0
 			toss_velocity_x = 0.0
-			is_lifted = false
-			say("Phew! Back on solid ground.", "neutral")
+			get_window().position = clamp_window_pos(get_window().position)
+			if is_lifted:
+				is_lifted = false
+				say("Phew! Back on solid ground.", "neutral")
 			_trigger_landing_bounce()
 		else:
 			get_window().position.y = next_y
+			get_window().position = clamp_window_pos(get_window().position)
 
 	# Typewriter text streaming
 	if is_typing:
@@ -1226,6 +1240,7 @@ func _input(event: InputEvent) -> void:
 						else:
 							if gravity_enabled:
 								get_window().position.y = floor_y
+							get_window().position = clamp_window_pos(get_window().position)
 							if is_lifted:
 								is_lifted = false
 								say("Phew! Thanks for putting me down.", "neutral")
@@ -1250,7 +1265,7 @@ func _input(event: InputEvent) -> void:
 			if gravity_enabled:
 				var floor_y = get_floor_y()
 				target_pos.y = min(target_pos.y, floor_y)
-			get_window().position = target_pos
+			get_window().position = clamp_window_pos(target_pos)
 
 func _trigger_landing_bounce() -> void:
 	var base_scale: Vector2 = model_list[current_model_idx].scale if model_list[current_model_idx].type == "live2d" else Vector2.ONE

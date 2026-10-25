@@ -18,7 +18,7 @@ namespace DesktopCompanionLauncher
         private static ContextMenuStrip trayMenu;
         private static Process engineProcess;
         private static bool isCompanionVisible = true;
-        private static bool isPerchEnabled = true;
+        private static bool isPerchEnabled = false;
         private static ToolStripMenuItem perchMenuItem;
         private const int UDP_PORT = 48291;
         private static Mutex singleInstanceMutex;
@@ -74,7 +74,7 @@ namespace DesktopCompanionLauncher
 
             var showItem = new ToolStripMenuItem("👁 Show / Hide Companion", null, (s, e) => ToggleVisibility());
             var headpatItem = new ToolStripMenuItem("💖 Headpat / Pet", null, (s, e) => SendCommand("HEADPAT"));
-            perchMenuItem = new ToolStripMenuItem("🪟 Window Perching: ON", null, (s, e) => TogglePerch());
+            perchMenuItem = new ToolStripMenuItem("🪟 Window Perching: OFF", null, (s, e) => TogglePerch());
             var chatItem = new ToolStripMenuItem("💬 Open Chat (Enter)", null, (s, e) => SendCommand("TOGGLE_CHAT"));
             var outfitItem = new ToolStripMenuItem("👗 Next Outfit / Model", null, (s, e) => SendCommand("NEXT_MODEL"));
             var gravityItem = new ToolStripMenuItem("🌍 Toggle Gravity (Drop / Float)", null, (s, e) => SendCommand("TOGGLE_GRAVITY"));

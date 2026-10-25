@@ -177,11 +177,13 @@ volume_db = -6.0
 [node name="BubbleContainer" type="MarginContainer" parent="UI"]
 offset_left = 20.0
 offset_top = 18.0
-offset_right = 560.0
+offset_right = 530.0
 offset_bottom = 120.0
 
 [node name="SpeechBubble" type="PanelContainer" parent="UI/BubbleContainer"]
+custom_minimum_size = Vector2(160, 0)
 layout_mode = 2
+size_flags_horizontal = 0
 size_flags_vertical = 0
 theme_override_styles/panel = SubResource("StyleBoxFlat_speech")
 
@@ -207,8 +209,8 @@ text = " ✦ Camellya "
 [node name="BubbleLabel" type="Label" parent="UI/BubbleContainer/SpeechBubble/MarginContainer/VBox"]
 layout_mode = 2
 theme_override_colors/font_color = Color(0.1, 0.12, 0.16, 1)
-theme_override_font_sizes/font_size = 13
-text = "..."
+theme_override_font_sizes/font_size = 12
+text = ""
 horizontal_alignment = 0
 vertical_alignment = 1
 autowrap_mode = 2
@@ -984,7 +986,7 @@ theme_override_constants/separation = 6
 layout_mode = 2
 size_flags_horizontal = 3
 theme_override_font_sizes/font_size = 10
-text = "🪟 Perch: ON"
+text = "🪟 Perch: OFF"
 
 [node name="BtnGravity" type="Button" parent="UI/SettingsPanel/Margin/VBox/TogglesRow"]
 layout_mode = 2
