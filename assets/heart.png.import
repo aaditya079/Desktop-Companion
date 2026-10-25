@@ -3,15 +3,15 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://c1iseq8fqgri0"
-path="res://.godot/imported/lilith_heart.png-a34bf246442cefde55f0bf70b67e2ef0.ctex"
+path="res://.godot/imported/heart.png-a34bf246442cefde55f0bf70b67e2ef0.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://assets/lilith_heart.png"
-dest_files=["res://.godot/imported/lilith_heart.png-a34bf246442cefde55f0bf70b67e2ef0.ctex"]
+source_file="res://assets/heart.png"
+dest_files=["res://.godot/imported/heart.png-a34bf246442cefde55f0bf70b67e2ef0.ctex"]
 
 [params]
 
