@@ -5,6 +5,7 @@ using System.IO;
 using System.IO.Compression;
 using System.Net;
 using System.Net.Sockets;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 using System.Windows.Forms;
@@ -17,6 +18,8 @@ namespace DesktopCompanionLauncher
         private static ContextMenuStrip trayMenu;
         private static Process engineProcess;
         private static bool isCompanionVisible = true;
+        private static bool isPerchEnabled = true;
+        private static ToolStripMenuItem perchMenuItem;
         private const int UDP_PORT = 48291;
         private static Mutex singleInstanceMutex;
         private static string appDir;
@@ -42,6 +45,7 @@ namespace DesktopCompanionLauncher
                 SetupTray();
                 if (StartCompanionEngine())
                 {
+                    StartWindowTracker();
                     Application.Run();
                 }
             }
@@ -63,6 +67,8 @@ namespace DesktopCompanionLauncher
             trayMenu.Items.Add(new ToolStripSeparator());
 
             var showItem = new ToolStripMenuItem("👁 Show / Hide Companion", null, (s, e) => ToggleVisibility());
+            var headpatItem = new ToolStripMenuItem("💖 Headpat / Pet", null, (s, e) => SendCommand("HEADPAT"));
+            perchMenuItem = new ToolStripMenuItem("🪟 Window Perching: ON", null, (s, e) => TogglePerch());
             var chatItem = new ToolStripMenuItem("💬 Open Chat (Enter)", null, (s, e) => SendCommand("TOGGLE_CHAT"));
             var outfitItem = new ToolStripMenuItem("👗 Next Outfit / Model", null, (s, e) => SendCommand("NEXT_MODEL"));
             var gravityItem = new ToolStripMenuItem("🌍 Toggle Gravity (Drop / Float)", null, (s, e) => SendCommand("TOGGLE_GRAVITY"));
@@ -70,6 +76,8 @@ namespace DesktopCompanionLauncher
             var soundItem = new ToolStripMenuItem("🔊 Toggle Sound Effects", null, (s, e) => SendCommand("TOGGLE_SOUND"));
 
             trayMenu.Items.Add(showItem);
+            trayMenu.Items.Add(headpatItem);
+            trayMenu.Items.Add(perchMenuItem);
             trayMenu.Items.Add(chatItem);
             trayMenu.Items.Add(outfitItem);
             trayMenu.Items.Add(gravityItem);
@@ -205,8 +213,8 @@ namespace DesktopCompanionLauncher
                 psi.Arguments = "--path \"" + appDir.TrimEnd('\\', '/') + "\"";
                 psi.WorkingDirectory = appDir;
                 psi.UseShellExecute = false;
-                psi.CreateNoWindow = true;
-                psi.WindowStyle = ProcessWindowStyle.Hidden;
+                psi.CreateNoWindow = false;
+                psi.WindowStyle = ProcessWindowStyle.Normal;
 
                 engineProcess = new Process();
                 engineProcess.StartInfo = psi;
@@ -305,6 +313,144 @@ namespace DesktopCompanionLauncher
             return null;
         }
 
+        private static void TogglePerch()
+        {
+            isPerchEnabled = !isPerchEnabled;
+            if (perchMenuItem != null)
+            {
+                perchMenuItem.Text = isPerchEnabled ? "🪟 Window Perching: ON" : "🪟 Window Perching: OFF";
+            }
+            SendCommand("TOGGLE_PERCH");
+        }
+
+        #region Win32 Window Topology Tracking
+        [DllImport("user32.dll")]
+        private static extern IntPtr GetForegroundWindow();
+
+        [DllImport("user32.dll", CharSet = CharSet.Auto, SetLastError = true)]
+        private static extern int GetWindowText(IntPtr hWnd, StringBuilder lpString, int nMaxCount);
+
+        [DllImport("user32.dll")]
+        private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+
+        [DllImport("user32.dll")]
+        private static extern bool IsWindowVisible(IntPtr hWnd);
+
+        [DllImport("user32.dll")]
+        private static extern bool IsIconic(IntPtr hWnd);
+
+        [DllImport("dwmapi.dll")]
+        private static extern int DwmGetWindowAttribute(IntPtr hwnd, int dwAttribute, out RECT pvAttribute, int cbAttribute);
+
+        [DllImport("user32.dll")]
+        private static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
+
+        private const int DWMWA_EXTENDED_FRAME_BOUNDS = 9;
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct RECT
+        {
+            public int Left;
+            public int Top;
+            public int Right;
+            public int Bottom;
+        }
+
+        private static System.Threading.Timer windowTrackerTimer;
+        private static IntPtr lastTrackedHwnd = IntPtr.Zero;
+        private static RECT lastTrackedRect = new RECT();
+        private static string lastTrackedProc = "";
+        private static string lastTrackedTitle = "";
+
+        private static void StartWindowTracker()
+        {
+            windowTrackerTimer = new System.Threading.Timer(TrackForegroundWindow, null, 1200, 200);
+        }
+
+        private static void TrackForegroundWindow(object state)
+        {
+            if (!isPerchEnabled) return;
+
+            try
+            {
+                IntPtr fg = GetForegroundWindow();
+                if (fg == IntPtr.Zero || IsIconic(fg) || !IsWindowVisible(fg))
+                {
+                    if (lastTrackedHwnd != IntPtr.Zero)
+                    {
+                        lastTrackedHwnd = IntPtr.Zero;
+                        SendCommand("PERCH:NONE:Desktop:Desktop");
+                    }
+                    return;
+                }
+
+                uint pid;
+                GetWindowThreadProcessId(fg, out pid);
+                if (pid == 0) return;
+
+                // Skip our own engine / launcher
+                if (engineProcess != null && !engineProcess.HasExited && pid == (uint)engineProcess.Id)
+                    return;
+                if (pid == (uint)Process.GetCurrentProcess().Id)
+                    return;
+
+                string procName = "";
+                try { procName = Process.GetProcessById((int)pid).ProcessName; } catch { return; }
+
+                string lowerProc = procName.ToLowerInvariant();
+                if (lowerProc == "progman" || lowerProc == "workerw" || lowerProc == "shellexperiencehost" || lowerProc == "searchhost" || lowerProc == "startmenuexperiencehost")
+                {
+                    if (lastTrackedHwnd != IntPtr.Zero)
+                    {
+                        lastTrackedHwnd = IntPtr.Zero;
+                        SendCommand("PERCH:NONE:Desktop:Desktop");
+                    }
+                    return;
+                }
+
+                var sb = new StringBuilder(256);
+                GetWindowText(fg, sb, 256);
+                string title = sb.ToString();
+                if (string.IsNullOrWhiteSpace(title)) return;
+
+                RECT r;
+                int hr = DwmGetWindowAttribute(fg, DWMWA_EXTENDED_FRAME_BOUNDS, out r, Marshal.SizeOf(typeof(RECT)));
+                if (hr != 0) GetWindowRect(fg, out r);
+
+                int w = r.Right - r.Left;
+                int h = r.Bottom - r.Top;
+
+                // Ignore tiny popups
+                if (w < 260 || h < 200) return;
+
+                // Check change delta
+                bool changed = (fg != lastTrackedHwnd) ||
+                               Math.Abs(r.Left - lastTrackedRect.Left) > 3 ||
+                               Math.Abs(r.Top - lastTrackedRect.Top) > 3 ||
+                               Math.Abs(w - (lastTrackedRect.Right - lastTrackedRect.Left)) > 3 ||
+                               Math.Abs(h - (lastTrackedRect.Bottom - lastTrackedRect.Top)) > 3;
+
+                if (changed)
+                {
+                    lastTrackedHwnd = fg;
+                    lastTrackedRect = r;
+                    lastTrackedProc = procName;
+                    lastTrackedTitle = title;
+
+                    string safeTitle = title.Replace(":", " ").Replace("\n", " ").Replace("\r", " ").Trim();
+                    if (safeTitle.Length > 60) safeTitle = safeTitle.Substring(0, 60);
+
+                    string msg = string.Format("PERCH:{0},{1},{2},{3}:{4}:{5}", r.Left, r.Top, w, h, procName, safeTitle);
+                    SendCommand(msg);
+                }
+            }
+            catch
+            {
+                // Never crash the background thread
+            }
+        }
+        #endregion
+
         private static void ExitApplication()
         {
             SendCommand("QUIT");
@@ -315,6 +461,11 @@ namespace DesktopCompanionLauncher
 
         private static void Cleanup()
         {
+            if (windowTrackerTimer != null)
+            {
+                try { windowTrackerTimer.Dispose(); } catch { }
+            }
+
             if (trayIcon != null)
             {
                 trayIcon.Visible = false;
