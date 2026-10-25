@@ -268,6 +268,7 @@ text = "✕"
 flat = true
 
 [node name="QuickDock" type="PanelContainer" parent="UI"]
+visible = false
 offset_left = 125.0
 offset_top = 668.0
 offset_right = 355.0
@@ -305,6 +306,13 @@ layout_mode = 2
 tooltip_text = "Toggle Gravity Drop / Float Mode"
 theme_override_font_sizes/font_size = 13
 text = "🌍"
+flat = true
+
+[node name="BtnDockPerch" type="Button" parent="UI/QuickDock/Margin/HBox"]
+layout_mode = 2
+tooltip_text = "Toggle Window Perching (Sit on Windows)"
+theme_override_font_sizes/font_size = 13
+text = "🪟"
 flat = true
 
 [node name="BtnDockPoke" type="Button" parent="UI/QuickDock/Margin/HBox"]
@@ -345,6 +353,11 @@ layout_mode = 2
 theme_override_font_sizes/font_size = 12
 text = "💬 Talk / Chat"
 
+[node name="BtnHeadpat" type="Button" parent="UI/ContextMenu/Margin/VBox"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 12
+text = "💖 Headpat / Stroke"
+
 [node name="ModelLabel" type="Label" parent="UI/ContextMenu/Margin/VBox"]
 layout_mode = 2
 theme_override_colors/font_color = Color(0.7, 0.75, 0.85, 1)
@@ -364,6 +377,11 @@ text = "⏱ Focus Timer: 25m"
 layout_mode = 2
 theme_override_font_sizes/font_size = 12
 text = "🌍 Gravity Drop: ON"
+
+[node name="BtnPerch" type="Button" parent="UI/ContextMenu/Margin/VBox"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 12
+text = "🪟 Window Perch: ON"
 
 [node name="BtnSound" type="Button" parent="UI/ContextMenu/Margin/VBox"]
 layout_mode = 2
