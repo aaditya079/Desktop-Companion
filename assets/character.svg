@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 240" width="200" height="240">
+  <defs>
+    <radialGradient id="bodyGrad" cx="40%" cy="35%" r="60%">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="50%" stop-color="#e2e8f0"/>
+      <stop offset="100%" stop-color="#94a3b8"/>
+    </radialGradient>
+    <radialGradient id="faceGrad" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#0f172a"/>
+      <stop offset="90%" stop-color="#020617"/>
+    </radialGradient>
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="3" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- Antenna -->
+  <line x1="100" y1="45" x2="100" y2="20" stroke="#64748b" stroke-width="4" stroke-linecap="round"/>
+  <circle cx="100" cy="18" r="8" fill="#38bdf8" filter="url(#glow)"/>
+
+  <!-- Body / Ears -->
+  <circle cx="48" cy="95" r="16" fill="#cbd5e1" stroke="#64748b" stroke-width="3"/>
+  <circle cx="152" cy="95" r="16" fill="#cbd5e1" stroke="#64748b" stroke-width="3"/>
+  <circle cx="48" cy="95" r="8" fill="#38bdf8" opacity="0.8"/>
+  <circle cx="152" cy="95" r="8" fill="#38bdf8" opacity="0.8"/>
+
+  <!-- Head Base -->
+  <rect x="40" y="45" width="120" height="110" rx="35" ry="35" fill="url(#bodyGrad)" stroke="#64748b" stroke-width="3"/>
+
+  <!-- Screen Face -->
+  <rect x="52" y="62" width="96" height="74" rx="22" ry="22" fill="url(#faceGrad)"/>
+
+  <!-- Eyes (Glowing Cyan) -->
+  <ellipse cx="78" cy="96" rx="10" ry="14" fill="#38bdf8" filter="url(#glow)"/>
+  <circle cx="81" cy="92" r="4" fill="#ffffff"/>
+  
+  <ellipse cx="122" cy="96" rx="10" ry="14" fill="#38bdf8" filter="url(#glow)"/>
+  <circle cx="125" cy="92" r="4" fill="#ffffff"/>
+
+  <!-- Cheeks Blush -->
+  <circle cx="68" cy="116" r="5" fill="#f43f5e" opacity="0.5"/>
+  <circle cx="132" cy="116" r="5" fill="#f43f5e" opacity="0.5"/>
+
+  <!-- Body Bottom Float Base -->
+  <path d="M70,160 Q100,185 130,160 Q120,205 100,210 Q80,205 70,160 Z" fill="url(#bodyGrad)" stroke="#64748b" stroke-width="3"/>
+  <ellipse cx="100" cy="205" rx="14" ry="5" fill="#38bdf8" filter="url(#glow)"/>
+</svg>
