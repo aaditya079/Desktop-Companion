@@ -1,0 +1,24 @@
+[remap]
+
+importer="wav"
+type="AudioStreamWAV"
+uid="uid://ybsnk4bkehhu"
+path="res://.godot/imported/bandicam 2021-11-23 02-19-22-154.mp4.wav-f75b8e64730464cb99386e2d4094448a.sample"
+
+[deps]
+
+source_file="res://assets/live2d/murasame/sounds/bandicam 2021-11-23 02-19-22-154.mp4.wav"
+dest_files=["res://.godot/imported/bandicam 2021-11-23 02-19-22-154.mp4.wav-f75b8e64730464cb99386e2d4094448a.sample"]
+
+[params]
+
+force/8_bit=false
+force/mono=false
+force/max_rate=false
+force/max_rate_hz=44100
+edit/trim=false
+edit/normalize=false
+edit/loop_mode=0
+edit/loop_begin=0
+edit/loop_end=-1
+compress/mode=2
