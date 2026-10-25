@@ -172,19 +172,22 @@ script = ExtResource("4_ai")
 [node name="SFXPlayer" type="AudioStreamPlayer" parent="."]
 volume_db = -6.0
 
+[node name="VoicePlayer" type="AudioStreamPlayer" parent="."]
+volume_db = 0.0
+
 [node name="UI" type="CanvasLayer" parent="."]
 
 [node name="BubbleContainer" type="MarginContainer" parent="UI"]
 offset_left = 20.0
-offset_top = 18.0
+offset_top = 40.0
 offset_right = 530.0
-offset_bottom = 120.0
+offset_bottom = 232.0
 
 [node name="SpeechBubble" type="PanelContainer" parent="UI/BubbleContainer"]
 custom_minimum_size = Vector2(160, 0)
 layout_mode = 2
 size_flags_horizontal = 0
-size_flags_vertical = 0
+size_flags_vertical = 8
 theme_override_styles/panel = SubResource("StyleBoxFlat_speech")
 
 [node name="MarginContainer" type="MarginContainer" parent="UI/BubbleContainer/SpeechBubble"]

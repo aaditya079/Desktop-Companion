@@ -23,7 +23,6 @@ namespace DesktopCompanionLauncher
         private const int UDP_PORT = 48291;
         private static Mutex singleInstanceMutex;
         private static string appDir;
-        private static Process pythonBackendProcess = null;
 
         [STAThread]
         static void Main()
@@ -142,18 +141,7 @@ namespace DesktopCompanionLauncher
         private static string FindEnginePath()
         {
             // 1. Check local bin/
-            string[] localCandidates = new string[]
-            {
-                Path.Combine(appDir, "bin", "DesktopCompanionRuntime.exe"),
-                Path.Combine(appDir, "bin", "Godot.exe"),
-                Path.Combine(appDir, "bin", "Godot_v4.7.2-stable_win64.exe"),
-                Path.Combine(appDir, "bin", "Godot_v4.7.2-stable_win64_console.exe"),
-                Path.Combine(appDir, "Godot.exe"),
-                Path.Combine(appDir, "DesktopCompanionRuntime.exe"),
-                @"D:\Godot_v4.7.2-stable_win64.exe\Godot_v4.7.2-stable_win64.exe",
-                @"D:\Godot_v4.7.2-stable_win64.exe\Godot_v4.7.2-stable_win64_console.exe"
-            };
-
+            string[] localCandidates = new string[] { Path.Combine(appDir, "bin", "DesktopCompanionRuntime.exe"), Path.Combine(appDir, "bin", "Godot.exe"), Path.Combine(appDir, "DesktopCompanionRuntime.exe") };
             foreach (var path in localCandidates)
             {
                 if (File.Exists(path)) return path;
@@ -233,7 +221,6 @@ namespace DesktopCompanionLauncher
                     Application.Exit();
                 };
 
-                EnsureBackendRunning();
                 engineProcess.Start();
                 return true;
             }
@@ -241,47 +228,6 @@ namespace DesktopCompanionLauncher
             {
                 MessageBox.Show("Failed to launch companion engine:\n" + ex.Message, "Launch Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 return false;
-            }
-        }
-
-        private static void EnsureBackendRunning()
-        {
-            try
-            {
-                using (var tcp = new System.Net.Sockets.TcpClient())
-                {
-                    var ar = tcp.BeginConnect("127.0.0.1", 12393, null, null);
-                    bool success = ar.AsyncWaitHandle.WaitOne(400);
-                    if (success && tcp.Connected)
-                    {
-                        tcp.EndConnect(ar);
-                        return;
-                    }
-                }
-            }
-            catch { }
-
-            try
-            {
-                string olvDir = Path.GetFullPath(Path.Combine(appDir, "..", "Open-LLM-VTuber"));
-                if (Directory.Exists(olvDir) && File.Exists(Path.Combine(olvDir, "run_server.py")))
-                {
-                    var psi = new ProcessStartInfo();
-                    psi.FileName = "uv";
-                    psi.Arguments = "run run_server.py";
-                    psi.WorkingDirectory = olvDir;
-                    psi.UseShellExecute = false;
-                    psi.CreateNoWindow = true;
-                    psi.WindowStyle = ProcessWindowStyle.Hidden;
-
-                    pythonBackendProcess = new Process();
-                    pythonBackendProcess.StartInfo = psi;
-                    pythonBackendProcess.Start();
-                }
-            }
-            catch (Exception ex)
-            {
-                Debug.WriteLine("Backend start error: " + ex.Message);
             }
         }
 
@@ -562,11 +508,6 @@ namespace DesktopCompanionLauncher
                 try { engineProcess.Kill(); } catch { }
             }
 
-            if (pythonBackendProcess != null && !pythonBackendProcess.HasExited)
-            {
-                try { pythonBackendProcess.Kill(); } catch { }
-            }
-
             if (singleInstanceMutex != null)
             {
                 try { singleInstanceMutex.ReleaseMutex(); } catch { }
@@ -574,3 +515,4 @@ namespace DesktopCompanionLauncher
         }
     }
 }
+

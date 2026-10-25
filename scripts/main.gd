@@ -31,6 +31,10 @@ const MAX_FALL_SPEED: float = 2400.0
 
 # Focus Timer Widget & Audio
 @onready var sfx_player: AudioStreamPlayer = $SFXPlayer
+@onready var voice_player: AudioStreamPlayer = $VoicePlayer
+var current_audio_volumes: Array = []
+var volume_slice_sec: float = 0.02
+var volume_playhead: float = 0.0
 @onready var focus_widget: PanelContainer = $UI/FocusTimerWidget
 @onready var focus_label: Label = $UI/FocusTimerWidget/Margin/HBox/TimerLabel
 @onready var btn_stop_focus: Button = $UI/FocusTimerWidget/Margin/HBox/BtnStopTimer
@@ -294,7 +298,8 @@ func _ready() -> void:
 	DisplayServer.window_set_flag(DisplayServer.WINDOW_FLAG_TRANSPARENT, true)
 	get_tree().root.transparent_bg = true
 
-	# Set taskbar window icon if available
+	# Set window title and icon
+	DisplayServer.window_set_title("Desktop Companion")
 	if FileAccess.file_exists("res://assets/app_icon.png"):
 		var icon_img = Image.load_from_file("res://assets/app_icon.png")
 		if icon_img:
@@ -412,6 +417,7 @@ func _ready() -> void:
 	ai_client.request_failed.connect(_on_ai_error)
 	ai_client.test_completed.connect(_on_ai_test_completed)
 	ai_client.subtitle_chunk_received.connect(_on_ai_subtitle)
+	ai_client.audio_chunk_received.connect(_on_ai_audio_chunk)
 	ai_client.tool_status_updated.connect(_on_ai_tool_status)
 	ai_client.backend_connection_changed.connect(_on_backend_connection_changed)
 
@@ -841,6 +847,7 @@ func _on_active_window_changed(proc_name: String, win_title: String) -> void:
 
 func _reset_to_default_position() -> void:
 	var win = get_window()
+	win.mode = Window.MODE_WINDOWED
 	var screen_rect := get_usable_screen_rect()
 	var px = screen_rect.position.x + screen_rect.size.x - win.size.x - 10
 	var py = get_floor_y()
@@ -858,9 +865,15 @@ func _reset_to_default_position() -> void:
 
 func _show_and_focus() -> void:
 	var win = get_window()
-	win.position = clamp_window_pos(win.position)
+	win.mode = Window.MODE_WINDOWED
+	var screen_rect := get_usable_screen_rect()
+	var px = screen_rect.position.x + screen_rect.size.x - win.size.x - 10
+	var py = get_floor_y()
+	win.position = clamp_window_pos(Vector2i(px, py))
 	win.show()
 	win.always_on_top = true
+	DisplayServer.window_set_flag(DisplayServer.WINDOW_FLAG_ALWAYS_ON_TOP, true)
+	DisplayServer.window_move_to_foreground()
 	say("I'm right here! (Double-click me for actions)", "happy")
 	play_sfx("sparkle")
 	sparkle_particles.position = Vector2(160, 500)
@@ -895,6 +908,10 @@ func _process(delta: float) -> void:
 		var pkt = udp_server.get_packet().get_string_from_utf8().strip_edges()
 		if pkt.begins_with("PERCH:"):
 			_handle_perch_packet(pkt)
+		elif pkt.begins_with("CHAT:"):
+			var user_text = pkt.substr(5).strip_edges()
+			if not user_text.is_empty():
+				ai_client.send_message(user_text)
 		else:
 			match pkt:
 				"HEADPAT":
@@ -1125,21 +1142,40 @@ func _process(delta: float) -> void:
 				)
 			blink_timer = randf_range(3.2, 5.8)
 
-		# Live2D Mouth Flap while speaking
-		if is_speaking:
+		# Mouth motion & Lip-sync while speaking
+		if current_audio_volumes.size() > 0:
+			volume_playhead += delta
+			var v_idx = int(volume_playhead / volume_slice_sec)
+			if v_idx < current_audio_volumes.size():
+				var vol: float = current_audio_volumes[v_idx]
+				var mouth_v = clampf(vol * 2.2, 0.0, 1.0)
+				_set_param_direct("ParamMouthOpenY", mouth_v)
+				if reze_3d and reze_3d.mesh and reze_3d.mouth_shape_idx != -1:
+					reze_3d.mesh.set_blend_shape_value(reze_3d.mouth_shape_idx, mouth_v)
+			else:
+				current_audio_volumes.clear()
+				_set_param_direct("ParamMouthOpenY", 0.0)
+				if reze_3d and reze_3d.mesh and reze_3d.mouth_shape_idx != -1:
+					reze_3d.mesh.set_blend_shape_value(reze_3d.mouth_shape_idx, 0.0)
+		elif is_speaking:
 			mouth_toggle_timer -= delta
 			if mouth_toggle_timer <= 0.0:
 				mouth_toggle_timer = 0.12
 				mouth_open = not mouth_open
 				_set_param_direct("ParamMouthOpenY", 0.85 if mouth_open else 0.0)
+				if reze_3d and reze_3d.mesh and reze_3d.mouth_shape_idx != -1:
+					reze_3d.mesh.set_blend_shape_value(reze_3d.mouth_shape_idx, 0.75 if mouth_open else 0.0)
 
 	# Global speech animation timer
 	if is_speaking:
 		talk_anim_timer -= delta
-		if talk_anim_timer <= 0.0:
+		var is_audio_busy = (voice_player != null and voice_player.playing) or current_audio_volumes.size() > 0
+		if talk_anim_timer <= 0.0 and not is_audio_busy:
 			is_speaking = false
 			mouth_open = false
 			_set_param_direct("ParamMouthOpenY", 0.0)
+			if reze_3d and reze_3d.mesh and reze_3d.mouth_shape_idx != -1:
+				reze_3d.mesh.set_blend_shape_value(reze_3d.mouth_shape_idx, 0.0)
 
 	# Auto-Hide Speech Bubble
 	if bubble_panel.visible:
@@ -1418,7 +1454,33 @@ func _show_time_greeting() -> void:
 	else:
 		say("Good evening! Unwinding or still busy? I'm right here with you.", "neutral")
 
+func _update_bubble_position() -> void:
+	if not bubble_container:
+		return
+	var head_y := 245.0
+	if current_model_idx < model_list.size():
+		var info = model_list[current_model_idx]
+		if info.get("type") == "3d":
+			head_y = 235.0
+		else:
+			var pos_y: float = info.get("pos", Vector2(160, 480)).y
+			head_y = pos_y - 235.0 # Camellya: 480 - 235 = 245
+	
+	# Keep container bottom ~12px above character's head
+	var bottom_y = max(110.0, head_y - 12.0)
+	bubble_container.offset_top = max(15.0, bottom_y - 195.0)
+	bubble_container.offset_bottom = bottom_y
+
+	# When right-side menus/drawers are open, narrow the bubble so it sits neatly without overlapping
+	if (chat_drawer and chat_drawer.visible) or (settings_panel and settings_panel.visible) or (pill_menu and pill_menu.visible):
+		bubble_container.offset_left = 12.0
+		bubble_container.offset_right = 265.0
+	else:
+		bubble_container.offset_left = 20.0
+		bubble_container.offset_right = 530.0
+
 func say(text: String, _expression: String = "neutral") -> void:
+	_update_bubble_position()
 	full_target_text = text
 	displayed_char_progress = 0.0
 	is_typing = true
@@ -1548,8 +1610,54 @@ func _on_backend_connection_changed(connected: bool) -> void:
 		tool_chip.visible = false
 	else:
 		speaker_badge.text = " ✦ %s (Offline) " % model_list[current_model_idx].short_name
-		speaker_badge.add_theme_color_override("font_color", Color(1.0, 0.8, 0.8))
-		say("AI engine disconnected. Reconnecting in background... I'm still right here with you! ♡", "confused")
+		speaker_badge.add_theme_color_override("font_color", Color(0.85, 0.85, 0.85, 0.8))
+
+func _on_ai_audio_chunk(raw_bytes: PackedByteArray, volumes: Array, slice_length: int) -> void:
+	current_audio_volumes = volumes
+	volume_slice_sec = max(0.01, float(slice_length) / 1000.0)
+	volume_playhead = 0.0
+
+	if sound_enabled and raw_bytes.size() > 44:
+		var wav = _create_wav_stream_from_bytes(raw_bytes)
+		if wav and voice_player:
+			voice_player.stream = wav
+			voice_player.play()
+
+func _create_wav_stream_from_bytes(bytes: PackedByteArray) -> AudioStreamWAV:
+	if bytes.size() < 44:
+		return null
+	var riff = bytes.slice(0, 4).get_string_from_ascii()
+	var wave = bytes.slice(8, 12).get_string_from_ascii()
+	if riff != "RIFF" or wave != "WAVE":
+		return null
+
+	var stream = AudioStreamWAV.new()
+	var channels = bytes[22] | (bytes[23] << 8)
+	stream.stereo = (channels == 2)
+
+	var sample_rate = bytes[24] | (bytes[25] << 8) | (bytes[26] << 16) | (bytes[27] << 24)
+	stream.mix_rate = sample_rate
+
+	var bits = bytes[34] | (bytes[35] << 8)
+	if bits == 16:
+		stream.format = AudioStreamWAV.FORMAT_16_BITS
+	elif bits == 8:
+		stream.format = AudioStreamWAV.FORMAT_8_BITS
+	else:
+		stream.format = AudioStreamWAV.FORMAT_16_BITS
+
+	var offset = 36
+	while offset + 8 < bytes.size():
+		var tag = bytes.slice(offset, offset + 4).get_string_from_ascii()
+		var sz = bytes[offset + 4] | (bytes[offset + 5] << 8) | (bytes[offset + 6] << 16) | (bytes[offset + 7] << 24)
+		if tag == "data":
+			stream.data = bytes.slice(offset + 8, min(bytes.size(), offset + 8 + sz))
+			return stream
+		offset += 8 + sz
+
+	# Fallback standard 44-byte WAV offset
+	stream.data = bytes.slice(44)
+	return stream
 
 func _update_settings_ui() -> void:
 	api_key_input.text = ai_client.api_key

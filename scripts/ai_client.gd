@@ -2,6 +2,7 @@ extends Node
 
 signal reply_received(content: String, expression: String)
 signal subtitle_chunk_received(text: String, expression: String)
+signal audio_chunk_received(audio_data: PackedByteArray, volumes: Array, slice_length: int)
 signal tool_status_updated(tool_id: String, tool_name: String, status: String, arguments: Dictionary)
 signal request_failed(error_msg: String)
 signal thinking_started()
@@ -22,9 +23,19 @@ var is_ws_connected: bool = false
 var reconnect_timer: float = 0.0
 const RECONNECT_INTERVAL: float = 3.0
 
+# WebSocket Heartbeat & Keep-Alive
+var heartbeat_timer: float = 0.0
+const HEARTBEAT_INTERVAL: float = 12.0
+
+# Request Watchdog & Turn Accumulator
+var is_requesting: bool = false
+var request_watchdog_timer: float = 0.0
+const REQUEST_TIMEOUT_MAX: float = 20.0
+var accumulated_reply_text: String = ""
+var last_expression: String = "neutral"
+
 var http_request: HTTPRequest
 var test_http_request: HTTPRequest
-var is_requesting: bool = false
 var is_testing: bool = false
 
 const MemoryManagerScript = preload("res://scripts/memory_manager.gd")
@@ -65,6 +76,14 @@ func _process(delta: float) -> void:
 			backend_connection_changed.emit(true)
 			print(">>> Connected to AI Backend via WebSocket (%s) <<<" % ws_url)
 
+		# Keep-alive heartbeat ping
+		heartbeat_timer += delta
+		if heartbeat_timer >= HEARTBEAT_INTERVAL:
+			heartbeat_timer = 0.0
+			var ping_msg = {"type": "heartbeat"}
+			ws_peer.send_text(JSON.stringify(ping_msg))
+
+		# Read available WebSocket packets
 		while ws_peer.get_available_packet_count() > 0:
 			var pkt = ws_peer.get_packet()
 			var raw_str = pkt.get_string_from_utf8()
@@ -80,6 +99,21 @@ func _process(delta: float) -> void:
 		if reconnect_timer >= RECONNECT_INTERVAL:
 			reconnect_timer = 0.0
 			_try_connect_ws()
+
+	# Watchdog timer to prevent is_requesting from getting stuck
+	if is_requesting:
+		request_watchdog_timer += delta
+		if request_watchdog_timer >= REQUEST_TIMEOUT_MAX:
+			request_watchdog_timer = 0.0
+			is_requesting = false
+			if not accumulated_reply_text.is_empty():
+				var final_txt = accumulated_reply_text.strip_edges()
+				accumulated_reply_text = ""
+				if memory_mgr:
+					memory_mgr.add_chat_message("assistant", final_txt, last_expression)
+				reply_received.emit(final_txt, last_expression)
+	else:
+		request_watchdog_timer = 0.0
 
 func _try_connect_ws() -> void:
 	var state = ws_peer.get_ready_state()
@@ -98,6 +132,10 @@ func _handle_ws_packet(raw_str: String) -> void:
 	var msg_type: String = parsed.get("type", "")
 
 	match msg_type:
+		"heartbeat-ack":
+			# Connection is healthy and acknowledged
+			pass
+
 		"full-text":
 			var text: String = parsed.get("text", "")
 			if text == "Connection established":
@@ -117,11 +155,53 @@ func _handle_ws_packet(raw_str: String) -> void:
 			reply_received.emit(text.strip_edges(), expression)
 
 		"audio":
-			var subtitle: String = parsed.get("text", "")
-			var raw_exprs = parsed.get("expressions", [])
+			# Open-LLM-VTuber audio payload: contains text inside display_text dict, actions, and base64 audio
+			var subtitle: String = ""
+			var disp = parsed.get("display_text")
+			if disp is Dictionary:
+				subtitle = disp.get("text", "")
+			elif disp is String:
+				subtitle = disp
+			elif parsed.has("text"):
+				subtitle = str(parsed.get("text", ""))
+
+			var raw_exprs = []
+			var actions = parsed.get("actions")
+			if actions is Dictionary and actions.has("expressions"):
+				raw_exprs = actions.get("expressions")
+			elif parsed.has("expressions"):
+				raw_exprs = parsed.get("expressions")
+
 			var expr := _map_expression(raw_exprs)
+			if expr != "neutral":
+				last_expression = expr
+
 			if not subtitle.is_empty():
+				if not accumulated_reply_text.is_empty():
+					accumulated_reply_text += " " + subtitle
+				else:
+					accumulated_reply_text = subtitle
 				subtitle_chunk_received.emit(subtitle, expr)
+
+			var audio_b64 = parsed.get("audio")
+			if audio_b64 is String and not audio_b64.is_empty():
+				var raw_bytes := Marshalls.base64_to_raw(audio_b64)
+				var vols = parsed.get("volumes", [])
+				var slice_len: int = parsed.get("slice_length", 20)
+				audio_chunk_received.emit(raw_bytes, vols, slice_len)
+
+		"backend-synth-complete":
+			# Backend finished generating audio/text. Acknowledge playback complete to finalize turn
+			if is_ws_connected and ws_peer.get_ready_state() == WebSocketPeer.STATE_OPEN:
+				ws_peer.send_text(JSON.stringify({"type": "frontend-playback-complete"}))
+
+			if not accumulated_reply_text.is_empty():
+				var final_txt = accumulated_reply_text.strip_edges()
+				accumulated_reply_text = ""
+				is_requesting = false
+				if memory_mgr:
+					memory_mgr.add_chat_message("assistant", final_txt, last_expression)
+				reply_received.emit(final_txt, last_expression)
 
 		"tool_call_status":
 			var t_id: String = parsed.get("tool_id", "")
@@ -136,9 +216,22 @@ func _handle_ws_packet(raw_str: String) -> void:
 				cmd = parsed.get("text", "")
 			if cmd == "conversation-chain-start":
 				is_requesting = true
+				accumulated_reply_text = ""
+				last_expression = "neutral"
 				thinking_started.emit()
 			elif cmd == "conversation-chain-end":
 				is_requesting = false
+				if not accumulated_reply_text.is_empty():
+					var final_txt = accumulated_reply_text.strip_edges()
+					accumulated_reply_text = ""
+					if memory_mgr:
+						memory_mgr.add_chat_message("assistant", final_txt, last_expression)
+					reply_received.emit(final_txt, last_expression)
+
+		"error":
+			is_requesting = false
+			var err_msg: String = parsed.get("message", "AI backend error occurred.")
+			request_failed.emit(err_msg)
 
 func _map_expression(raw_expr) -> String:
 	if raw_expr is Array and raw_expr.size() > 0:
@@ -216,6 +309,7 @@ func send_message(user_text: String) -> void:
 		if memory_mgr:
 			memory_mgr.add_chat_message("user", user_text)
 		is_requesting = true
+		accumulated_reply_text = ""
 		thinking_started.emit()
 		var msg_payload := {
 			"type": "text-input",
