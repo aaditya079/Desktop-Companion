@@ -53,6 +53,7 @@ const MAX_FALL_SPEED: float = 2400.0
 @onready var btn_dock_chat: Button = $UI/QuickDock/Margin/HBox/BtnDockChat
 @onready var btn_dock_outfit: Button = $UI/QuickDock/Margin/HBox/BtnDockOutfit
 @onready var btn_dock_gravity: Button = $UI/QuickDock/Margin/HBox/BtnDockGravity
+@onready var btn_dock_perch: Button = $UI/QuickDock/Margin/HBox/BtnDockPerch
 @onready var btn_dock_poke: Button = $UI/QuickDock/Margin/HBox/BtnDockPoke
 @onready var btn_dock_menu: Button = $UI/QuickDock/Margin/HBox/BtnDockMenu
 
@@ -63,13 +64,32 @@ const MAX_FALL_SPEED: float = 2400.0
 @onready var btn_stop_focus: Button = $UI/FocusTimerWidget/Margin/HBox/BtnStopTimer
 
 # Context Menu Extra Buttons
+@onready var ctx_headpat: Button = $UI/ContextMenu/Margin/VBox/BtnHeadpat
 @onready var ctx_focus: Button = $UI/ContextMenu/Margin/VBox/BtnFocus
 @onready var ctx_sound: Button = $UI/ContextMenu/Margin/VBox/BtnSound
+@onready var ctx_perch: Button = $UI/ContextMenu/Margin/VBox/BtnPerch
 @onready var ctx_scale_dropdown: OptionButton = $UI/ContextMenu/Margin/VBox/ScaleDropdown
 
 var gravity_enabled: bool = true
 var sound_enabled: bool = true
 var current_scale_multiplier: float = 1.0
+
+# OS Window Topology & Perching Engine
+var perch_enabled: bool = true
+var is_perching: bool = false
+var target_perch_pos: Vector2 = Vector2.ZERO
+var tracked_app_name: String = ""
+var tracked_app_title: String = ""
+var last_app_comment_time: float = 0.0
+var window_topology_active: bool = false
+
+# QuickDock visibility timer
+var dock_auto_hide_timer: float = 0.0
+
+# Headpat Animation State
+var is_headpatting: bool = false
+var headpat_timer: float = 0.0
+var headpat_stroke_time: float = 0.0
 
 # Focus Mode state
 var focus_active: bool = false
@@ -265,8 +285,10 @@ func _ready() -> void:
 	send_btn.pressed.connect(func(): _on_input_submitted(input_box.text))
 	
 	ctx_talk.pressed.connect(_toggle_chat_input)
+	ctx_headpat.pressed.connect(func(): _trigger_headpat())
 	ctx_focus.pressed.connect(_toggle_focus_timer)
 	ctx_gravity.pressed.connect(_toggle_gravity)
+	ctx_perch.pressed.connect(_toggle_perch)
 	ctx_sound.pressed.connect(_toggle_sound)
 	ctx_settings.pressed.connect(_open_settings)
 	ctx_quit.pressed.connect(func(): get_tree().quit())
@@ -284,8 +306,12 @@ func _ready() -> void:
 	btn_dock_chat.pressed.connect(_toggle_chat_input)
 	btn_dock_outfit.pressed.connect(_cycle_next_model)
 	btn_dock_gravity.pressed.connect(_toggle_gravity)
-	btn_dock_poke.pressed.connect(func(): _handle_character_tap(Vector2(240, 200)))
+	btn_dock_perch.pressed.connect(_toggle_perch)
+	btn_dock_poke.pressed.connect(func(): _trigger_headpat())
 	btn_dock_menu.pressed.connect(func(): _open_context_menu(Vector2(240, 360)))
+
+	# QuickDock is hidden by default: double-click character to toggle!
+	quick_dock.visible = false
 
 	# Setup model dropdown
 	ctx_model_dropdown.clear()
@@ -342,6 +368,178 @@ func _toggle_gravity() -> void:
 	context_menu.visible = false
 	update_passthrough()
 
+func _toggle_perch() -> void:
+	perch_enabled = not perch_enabled
+	var label_text = "🪟 Window Perch: ON" if perch_enabled else "🪟 Window Perch: OFF"
+	if ctx_perch: ctx_perch.text = label_text
+	if btn_dock_perch:
+		btn_dock_perch.tooltip_text = label_text
+		btn_dock_perch.modulate = Color(1, 1, 1, 1) if perch_enabled else Color(0.6, 0.6, 0.6, 0.7)
+	if not perch_enabled:
+		if is_perching:
+			is_perching = false
+			window_topology_active = false
+			if gravity_enabled:
+				is_falling = true
+				fall_velocity = 0.0
+		say("Window perching OFF. Resting on taskbar!", "neutral")
+	else:
+		say("Window perching ON! I'll hop onto your active windows.", "happy")
+		play_sfx("sparkle")
+	context_menu.visible = false
+	update_passthrough()
+
+func _handle_perch_packet(pkt: String) -> void:
+	# Format: PERCH:<coords>:<procName>:<title>
+	# e.g.: PERCH:120,80,1200,800:Code:main.gd
+	# or: PERCH:NONE:Desktop:Desktop
+	var parts = pkt.split(":", true, 3)
+	if parts.size() < 2: return
+
+	var data = parts[1]
+	if data == "NONE":
+		if is_perching:
+			is_perching = false
+			window_topology_active = false
+			tracked_app_name = ""
+			tracked_app_title = ""
+			if gravity_enabled:
+				is_falling = true
+				fall_velocity = 0.0
+			say("Whoosh! Window minimized, dropping down!", "surprised")
+			play_sfx("sparkle")
+		return
+
+	if not perch_enabled or dragging:
+		return
+
+	var coords = data.split(",")
+	if coords.size() != 4: return
+	var wx = int(coords[0])
+	var wy = int(coords[1])
+	var ww = int(coords[2])
+	var wh = int(coords[3])
+
+	var screen_rect = DisplayServer.screen_get_usable_rect(get_window().current_screen)
+	if screen_rect.size.x <= 100:
+		screen_rect = Rect2i(0, 0, 1920, 1040)
+
+	# Calculate perch target:
+	# In our 480x720 window, character stands at y ≈ 680-690.
+	# Window top edge is at wy.
+	# Target window Y position is wy - 680 so character's feet rest right on the titlebar!
+	var target_y = wy - 680
+	target_y = clamp(target_y, screen_rect.position.y, screen_rect.position.y + screen_rect.size.y - 720)
+
+	# Place character near the top-right of the window (leaving window control buttons visible)
+	# or if the window is small, center on top of it
+	var target_x = wx + ww - 380
+	if ww < 450:
+		target_x = wx + int((ww - 480) * 0.5)
+	target_x = clamp(target_x, screen_rect.position.x, screen_rect.position.x + screen_rect.size.x - 480)
+
+	target_perch_pos = Vector2(target_x, target_y)
+	window_topology_active = true
+
+	var proc_name = parts[2] if parts.size() > 2 else ""
+	var win_title = parts[3] if parts.size() > 3 else ""
+
+	if not is_perching:
+		is_perching = true
+		is_falling = false
+		fall_velocity = 0.0
+		_trigger_perch_hop(target_perch_pos)
+	else:
+		# Smoothly follow window movements
+		var curr_pos = Vector2(get_window().position)
+		if curr_pos.distance_to(target_perch_pos) > 1.5:
+			get_window().position = Vector2i(curr_pos.lerp(target_perch_pos, 0.45))
+
+	if proc_name != tracked_app_name:
+		_on_active_window_changed(proc_name, win_title)
+
+func _trigger_perch_hop(target_pos: Vector2) -> void:
+	play_sfx("chime")
+	var curr_win = get_window()
+	var start_pos = Vector2(curr_win.position)
+	
+	# Jump arc: first leap up, then land on target
+	var hop_tween = create_tween().set_parallel(false)
+	var peak_y = int(min(start_pos.y, target_pos.y) - 35.0)
+	
+	# Lift off
+	hop_tween.tween_property(curr_win, "position:y", peak_y, 0.16).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+	# Land
+	hop_tween.tween_property(curr_win, "position:y", int(target_pos.y), 0.20).set_trans(Tween.TRANS_BOUNCE).set_ease(Tween.EASE_OUT)
+	
+	var hop_x_tween = create_tween()
+	hop_x_tween.tween_property(curr_win, "position:x", int(target_pos.x), 0.36).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN_OUT)
+	
+	sparkle_particles.position = Vector2(240, 500)
+	sparkle_particles.restart()
+
+func _on_active_window_changed(proc_name: String, win_title: String) -> void:
+	tracked_app_name = proc_name
+	tracked_app_title = win_title
+	
+	# Throttle ambient speech to avoid spam (35s cooldown between automatic remarks)
+	if anim_time - last_app_comment_time < 35.0:
+		return
+	last_app_comment_time = anim_time
+	
+	var p = proc_name.to_lower()
+	var t = win_title.to_lower()
+	
+	# If user has configured cloud AI API key, generate a live dynamic reaction!
+	if not ai_client.api_key.is_empty():
+		ai_client.send_message("The user just switched to application '%s' with window title '%s'. Give a brief, sweet, 1-sentence ambient micro-reaction." % [proc_name, win_title])
+		return
+
+	# Instant zero-latency ambient intelligence
+	var comment := ""
+	var expression := "happy"
+
+	if "code" in p or "devenv" in p or "idea" in p or "godot" in p or "pycharm" in p:
+		var code_quotes = [
+			"Coding mode! Let's build something clean and robust today.",
+			"Deep in the flow state. Remember to commit often!",
+			"Refactoring time? Take your time, you got this!"
+		]
+		comment = code_quotes[randi() % code_quotes.size()]
+		expression = "happy"
+	elif "spotify" in p or "music" in p or "itunes" in p:
+		comment = "Good soundtrack choice! Music always helps the groove."
+		expression = "happy"
+	elif "chrome" in p or "firefox" in p or "edge" in p or "brave" in p:
+		if "github" in t:
+			comment = "Checking GitHub! Hope all your CI checks are passing green."
+		elif "youtube" in t:
+			comment = "A little video break? Enjoy your watch!"
+		elif "stackoverflow" in t or "docs" in t:
+			comment = "Researching docs? Hope you find the exact solution!"
+		else:
+			comment = "Browsing around? Don't forget your posture!"
+		expression = "neutral"
+	elif "discord" in p or "telegram" in p or "slack" in p:
+		comment = "Connecting with friends? Say hi for me!"
+		expression = "happy"
+	elif "steam" in p or "game" in t or "valorant" in p or "genshin" in p:
+		comment = "Game time! Have fun and go get that win!"
+		expression = "surprised"
+	elif "wt" in p or "powershell" in p or "cmd" in p:
+		comment = "Terminal warrior! Command line magic at your fingertips."
+		expression = "neutral"
+
+	# Late-night awareness
+	var time_dict = Time.get_time_dict_from_system()
+	if time_dict.hour >= 23 or time_dict.hour < 5:
+		comment = "It's past midnight... please don't stay up too late, okay?"
+		expression = "shy"
+
+	if not comment.is_empty():
+		say(comment, expression)
+		play_sfx("chime")
+
 func update_passthrough() -> void:
 	if context_menu.visible or settings_panel.visible or input_container.visible:
 		get_window().mouse_passthrough_polygon = PackedVector2Array()
@@ -370,30 +568,49 @@ func _process(delta: float) -> void:
 	# Poll System Tray IPC commands from DesktopCompanion.exe launcher
 	if udp_server and udp_server.get_available_packet_count() > 0:
 		var pkt = udp_server.get_packet().get_string_from_utf8().strip_edges()
-		match pkt:
-			"NEXT_MODEL":
-				_cycle_next_model()
-			"TOGGLE_CHAT":
-				_toggle_chat_input()
-			"TOGGLE_GRAVITY":
-				_toggle_gravity()
-			"TOGGLE_FOCUS":
-				_toggle_focus_timer()
-			"TOGGLE_SOUND":
-				_toggle_sound()
-			"SHOW_WINDOW":
-				get_window().show()
-				get_window().always_on_top = true
-			"HIDE_WINDOW":
-				get_window().hide()
-			"TOGGLE_WINDOW":
-				if get_window().visible:
-					get_window().hide()
-				else:
+		if pkt.begins_with("PERCH:"):
+			_handle_perch_packet(pkt)
+		else:
+			match pkt:
+				"HEADPAT":
+					_trigger_headpat()
+				"TOGGLE_PERCH":
+					_toggle_perch()
+				"NEXT_MODEL":
+					_cycle_next_model()
+				"TOGGLE_CHAT":
+					_toggle_chat_input()
+				"TOGGLE_GRAVITY":
+					_toggle_gravity()
+				"TOGGLE_FOCUS":
+					_toggle_focus_timer()
+				"TOGGLE_SOUND":
+					_toggle_sound()
+				"SHOW_WINDOW":
 					get_window().show()
 					get_window().always_on_top = true
-			"QUIT":
-				get_tree().quit()
+				"HIDE_WINDOW":
+					get_window().hide()
+				"TOGGLE_WINDOW":
+					if get_window().visible:
+						get_window().hide()
+					else:
+						get_window().show()
+						get_window().always_on_top = true
+				"QUIT":
+					get_tree().quit()
+
+	# QuickDock auto-hide countdown
+	if quick_dock.visible:
+		dock_auto_hide_timer -= delta
+		if dock_auto_hide_timer <= 0.0:
+			var dock_fade = create_tween()
+			dock_fade.tween_property(quick_dock, "modulate:a", 0.0, 0.2)
+			dock_fade.tween_callback(func():
+				quick_dock.visible = false
+				quick_dock.modulate.a = 1.0
+				update_passthrough()
+			)
 
 	# Focus Timer countdown
 	if focus_active:
@@ -490,6 +707,36 @@ func _process(delta: float) -> void:
 			if dizzy_timer <= 0.0:
 				is_dizzy = false
 				say("Phew... the room finally stopped spinning!", "happy")
+		elif is_headpatting:
+			headpat_timer -= delta
+			headpat_stroke_time += delta
+			
+			# Gentle rhythmic head tilt and nuzzle into the stroke
+			var stroke_cycle = sin(headpat_stroke_time * 7.0)
+			_set_param("ParamAngleZ", stroke_cycle * 9.0 + 3.0, delta * 8.0)
+			_set_param("ParamAngleY", -10.0 + stroke_cycle * 2.5, delta * 8.0) # head dips gently down
+			_set_param("ParamBodyAngleX", stroke_cycle * 5.0, delta * 6.0)
+			
+			# Closed happy smiling eyes
+			_set_param_direct("ParamEyeLOpen", 0.0)
+			_set_param_direct("ParamEyeROpen", 0.0)
+			_set_param_direct("ParamEyeLSmile", 1.0)
+			_set_param_direct("ParamEyeRSmile", 1.0)
+			
+			# Deep blushing cheeks
+			_set_param_direct("ParamCheekPuff", 1.0)
+			
+			# Soft smiling mouth
+			_set_param_direct("ParamMouthForm", 1.0)
+			_set_param_direct("ParamMouthOpenY", 0.25)
+			
+			if headpat_timer <= 0.0:
+				is_headpatting = false
+				_set_param_direct("ParamEyeLOpen", 1.0)
+				_set_param_direct("ParamEyeROpen", 1.0)
+				_set_param_direct("ParamEyeLSmile", 0.0)
+				_set_param_direct("ParamEyeRSmile", 0.0)
+				_set_param_direct("ParamCheekPuff", 0.0)
 		elif not dragging:
 			var diff = Vector2(mouse_global - char_global_center)
 			var target_x = clamp(diff.x / 440.0, -1.0, 1.0)
@@ -634,11 +881,17 @@ func _input(event: InputEvent) -> void:
 			_open_context_menu(event.position)
 			return
 
-		# LEFT-CLICK: Dragging or Hitbox Interactions (Multi-zone poke)
+		# LEFT-CLICK: Dragging, Double-click (QuickDock toggle), or Hitbox Interactions (Multi-zone poke)
 		if event.button_index == MOUSE_BUTTON_LEFT:
 			if event.pressed:
+				if event.double_click:
+					# Double-click companion to toggle the QuickDock action bar!
+					_toggle_quick_dock()
+					dragging = false
+					return
 				dragging = true
 				is_falling = false
+				is_perching = false
 				fall_velocity = 0.0
 				toss_velocity_x = 0.0
 				is_lifted = false
@@ -671,6 +924,9 @@ func _input(event: InputEvent) -> void:
 	elif event is InputEventMouseMotion and dragging:
 		var moved_dist = (DisplayServer.mouse_get_position() - drag_start_mouse_pos).length()
 		if moved_dist > 8:
+			if quick_dock.visible:
+				quick_dock.visible = false
+				update_passthrough()
 			if not is_lifted:
 				is_lifted = true
 				var lift_lines := [
@@ -709,19 +965,9 @@ func _handle_character_tap(click_pos: Vector2) -> void:
 	play_sfx("pop")
 	# Multi-zone poke physics based on click Y coordinate
 	if click_pos.y < 280:
-		# Head zone: Affectionate headpat / stroke
-		heart_particles.position = click_pos
-		heart_particles.restart()
-		heart_particles.emitting = true
-		_set_param_direct("ParamCheekPuff", 0.6)
-		_set_param_direct("ParamMouthForm", 1.0)
-		var head_lines := [
-			"Ehehe~ (≧◡≦) That feels so nice!",
-			"(⁄ ⁄>⁄ ▽ ⁄<⁄ ⁄) Ah, you're patting my head!",
-			"Hehe, you're so sweet today! ♡",
-			"Keep going... I don't mind at all~"
-		]
-		say(head_lines.pick_random(), "happy")
+		# Head zone: Dedicated headpat animation sequence!
+		_trigger_headpat(click_pos)
+		return
 	elif click_pos.y < 500:
 		# Torso zone: Playful poke / tickle
 		sparkle_particles.position = click_pos
@@ -748,6 +994,44 @@ func _handle_character_tap(click_pos: Vector2) -> void:
 			"Firmly on duty right beside you! (*^‿^*)"
 		]
 		say(leg_lines.pick_random(), "neutral")
+
+func _trigger_headpat(contact_pos: Vector2 = Vector2(240, 200)) -> void:
+	is_headpatting = true
+	headpat_timer = 2.4
+	headpat_stroke_time = 0.0
+	
+	heart_particles.position = contact_pos
+	heart_particles.restart()
+	heart_particles.emitting = true
+	
+	play_sfx("chime")
+	
+	# Affectionate squish-spring reaction under petting hand
+	var base_scale: Vector2 = model_list[current_model_idx].scale if model_list[current_model_idx].type == "live2d" else Vector2.ONE
+	var target_node = live2d_model if model_list[current_model_idx].type == "live2d" else reze_container
+	var pat_tween = create_tween()
+	pat_tween.tween_property(target_node, "scale", Vector2(base_scale.x * 1.05, base_scale.y * 0.94), 0.12).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+	pat_tween.tween_property(target_node, "scale", base_scale, 0.18).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	
+	var pat_lines := [
+		"Ehehe~ ♡ (≧◡≦) Your headpats are the best!",
+		"Mmm... don't stop, that feels so soothing~ ♡",
+		"Hehe, patting my head again? I love it! ♡",
+		"Pats accepted! (★ω★) My energy is fully recharged! ✨"
+	]
+	say(pat_lines.pick_random(), "happy")
+
+func _toggle_quick_dock() -> void:
+	quick_dock.visible = not quick_dock.visible
+	if quick_dock.visible:
+		dock_auto_hide_timer = 8.0 # Auto dismiss after 8s of inactivity
+		quick_dock.scale = Vector2(0.85, 0.85)
+		quick_dock.modulate.a = 0.0
+		var tween = create_tween().set_parallel(true)
+		tween.tween_property(quick_dock, "modulate:a", 1.0, 0.16)
+		tween.tween_property(quick_dock, "scale", Vector2.ONE, 0.22).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+		play_sfx("chime")
+	update_passthrough()
 
 func play_emote(emote_type: String) -> void:
 	context_menu.visible = false
