@@ -1,0 +1,7 @@
+[configuration]
+entry_symbol = "gd_cubism_library_init"
+compatibility_minimum = "4.2"
+
+[libraries]
+windows.release.x86_64 = "res://addons/gd_cubism/bin/libgd_cubism.windows.release.x86_64.dll"
+windows.debug.x86_64 = "res://addons/gd_cubism/bin/libgd_cubism.windows.release.x86_64.dll"
