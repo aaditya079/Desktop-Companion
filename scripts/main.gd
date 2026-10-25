@@ -65,11 +65,15 @@ const MAX_FALL_SPEED: float = 2400.0
 @onready var settings_panel: PanelContainer = $UI/SettingsPanel
 @onready var model_dropdown: OptionButton = $UI/SettingsPanel/Margin/VBox/ModelDropdown
 @onready var scale_dropdown: OptionButton = $UI/SettingsPanel/Margin/VBox/ScaleDropdown
-@onready var btn_perch: Button = $UI/SettingsPanel/Margin/VBox/BtnPerch
-@onready var btn_gravity: Button = $UI/SettingsPanel/Margin/VBox/BtnGravity
-@onready var btn_sound: Button = $UI/SettingsPanel/Margin/VBox/BtnSound
+@onready var btn_perch: Button = $UI/SettingsPanel/Margin/VBox/TogglesRow/BtnPerch
+@onready var btn_gravity: Button = $UI/SettingsPanel/Margin/VBox/TogglesRow/BtnGravity
+@onready var btn_sound: Button = $UI/SettingsPanel/Margin/VBox/TogglesRow/BtnSound
 @onready var provider_option: OptionButton = $UI/SettingsPanel/Margin/VBox/ProviderOption
+@onready var endpoint_input: LineEdit = $UI/SettingsPanel/Margin/VBox/EndpointInput
+@onready var model_name_input: LineEdit = $UI/SettingsPanel/Margin/VBox/ModelNameInput
 @onready var api_key_input: LineEdit = $UI/SettingsPanel/Margin/VBox/KeyInput
+@onready var btn_test_api: Button = $UI/SettingsPanel/Margin/VBox/TestRow/BtnTestApi
+@onready var test_status_lbl: Label = $UI/SettingsPanel/Margin/VBox/TestRow/TestStatusLabel
 @onready var save_btn: Button = $UI/SettingsPanel/Margin/VBox/HBox/SaveButton
 @onready var close_btn: Button = $UI/SettingsPanel/Margin/VBox/HBox/CloseButton
 @onready var close_x_btn: Button = $UI/SettingsPanel/Margin/VBox/HeaderHBox/CloseX
@@ -353,10 +357,16 @@ func _ready() -> void:
 
 	# Setup settings provider options
 	provider_option.clear()
-	provider_option.add_item("Groq (Free & Fast)", 0)
-	provider_option.add_item("OpenRouter", 1)
-	provider_option.add_item("OpenAI", 2)
-	provider_option.add_item("Built-in Standalone", 3)
+	provider_option.add_item("Custom OpenAI-Compatible API", 0)
+	provider_option.add_item("Groq (Free & Fast Llama-3.3)", 1)
+	provider_option.add_item("OpenRouter (Claude, Gemini, etc.)", 2)
+	provider_option.add_item("OpenAI (GPT-4o, GPT-4o-mini)", 3)
+	provider_option.add_item("DeepSeek (deepseek-chat)", 4)
+	provider_option.add_item("Local / LM Studio (localhost:1234)", 5)
+	provider_option.add_item("Built-in Standalone (No Key)", 6)
+	provider_option.item_selected.connect(_on_provider_selected)
+
+	btn_test_api.pressed.connect(_on_test_api_pressed)
 
 	# Initialize procedural audio cache
 	_init_sfx()
@@ -364,6 +374,7 @@ func _ready() -> void:
 	ai_client.thinking_started.connect(_on_ai_thinking)
 	ai_client.reply_received.connect(_on_ai_reply)
 	ai_client.request_failed.connect(_on_ai_error)
+	ai_client.test_completed.connect(_on_ai_test_completed)
 
 	_show_time_greeting()
 	update_passthrough()
@@ -835,6 +846,8 @@ func _process(delta: float) -> void:
 					_open_pill_menu()
 				"CLOSE_MENU":
 					_close_pill_menu()
+				"OPEN_SETTINGS":
+					_on_btn_settings()
 				"TOGGLE_PERCH":
 					_toggle_perch()
 				"NEXT_MODEL":
@@ -1296,6 +1309,9 @@ func _on_model_selected(idx: int) -> void:
 		sparkle_particles.restart()
 		sparkle_particles.emitting = true
 
+	if ai_client:
+		ai_client.set_companion_name(info.name)
+
 	say("Switched to " + info.name + "!", "neutral")
 	play_sfx("sparkle")
 	update_passthrough()
@@ -1365,22 +1381,86 @@ func _on_ai_error(err_msg: String) -> void:
 
 func _update_settings_ui() -> void:
 	api_key_input.text = ai_client.api_key
+	endpoint_input.text = ai_client.base_url
+	model_name_input.text = ai_client.model_name
+	test_status_lbl.text = "Ready to test"
+	test_status_lbl.modulate = Color(0.4, 0.45, 0.55)
+
 	match ai_client.provider:
-		"groq": provider_option.selected = 0
-		"openrouter": provider_option.selected = 1
-		"openai": provider_option.selected = 2
-		"builtin": provider_option.selected = 3
+		"custom": provider_option.selected = 0
+		"groq": provider_option.selected = 1
+		"openrouter": provider_option.selected = 2
+		"openai": provider_option.selected = 3
+		"deepseek": provider_option.selected = 4
+		"local": provider_option.selected = 5
+		"builtin": provider_option.selected = 6
+		_:
+			provider_option.selected = 0
+
+func _on_provider_selected(idx: int) -> void:
+	match idx:
+		0: # Custom OpenAI-Compatible
+			if endpoint_input.text.strip_edges().is_empty():
+				endpoint_input.text = "https://api.openai.com/v1/chat/completions"
+			if model_name_input.text.strip_edges().is_empty():
+				model_name_input.text = "gpt-4o-mini"
+		1: # Groq
+			endpoint_input.text = "https://api.groq.com/openai/v1/chat/completions"
+			model_name_input.text = "llama-3.3-70b-versatile"
+		2: # OpenRouter
+			endpoint_input.text = "https://openrouter.ai/api/v1/chat/completions"
+			model_name_input.text = "anthropic/claude-3.5-sonnet"
+		3: # OpenAI
+			endpoint_input.text = "https://api.openai.com/v1/chat/completions"
+			model_name_input.text = "gpt-4o-mini"
+		4: # DeepSeek
+			endpoint_input.text = "https://api.deepseek.com/chat/completions"
+			model_name_input.text = "deepseek-chat"
+		5: # Local / LM Studio
+			endpoint_input.text = "http://localhost:1234/v1/chat/completions"
+			model_name_input.text = "local-model"
+		6: # Built-in Standalone
+			endpoint_input.text = ""
+			model_name_input.text = ""
+			api_key_input.text = ""
+
+func _on_test_api_pressed() -> void:
+	test_status_lbl.text = "⚡ Testing..."
+	test_status_lbl.modulate = Color(0.95, 0.75, 0.2)
+	btn_test_api.disabled = true
+	var endpoint = endpoint_input.text.strip_edges()
+	var model = model_name_input.text.strip_edges()
+	var key = api_key_input.text.strip_edges()
+	ai_client.test_api_connection(endpoint, model, key)
+
+func _on_ai_test_completed(success: bool, message: String) -> void:
+	btn_test_api.disabled = false
+	if success:
+		test_status_lbl.text = "✓ " + message
+		test_status_lbl.modulate = Color(0.18, 0.8, 0.44)
+		play_sfx("sparkle")
+	else:
+		test_status_lbl.text = "✕ " + message
+		test_status_lbl.modulate = Color(0.9, 0.25, 0.25)
+		play_sfx("pop")
 
 func _on_settings_save() -> void:
 	ai_client.api_key = api_key_input.text.strip_edges()
+	ai_client.base_url = endpoint_input.text.strip_edges()
+	ai_client.model_name = model_name_input.text.strip_edges()
 	match provider_option.selected:
-		0: ai_client.provider = "groq"
-		1: ai_client.provider = "openrouter"
-		2: ai_client.provider = "openai"
-		3: ai_client.provider = "builtin"
+		0: ai_client.provider = "custom"
+		1: ai_client.provider = "groq"
+		2: ai_client.provider = "openrouter"
+		3: ai_client.provider = "openai"
+		4: ai_client.provider = "deepseek"
+		5: ai_client.provider = "local"
+		6: ai_client.provider = "builtin"
+		_: ai_client.provider = "custom"
 	ai_client.save_config()
 	settings_panel.visible = false
-	say("Settings saved successfully! Ready to chat.", "neutral")
+	say("Settings saved! Ready to chat with your chosen AI.", "neutral")
+	play_sfx("chime")
 	update_passthrough()
 
 # ==============================================================================

@@ -3,26 +3,48 @@ extends Node
 signal reply_received(content: String, expression: String)
 signal request_failed(error_msg: String)
 signal thinking_started()
+signal test_completed(success: bool, message: String)
 
 # Config settings (persisted in user://config.json)
 var api_key: String = ""
-var provider: String = "groq" # "groq", "openrouter", "openai", "custom", "offline"
-var base_url: String = "https://api.groq.com/openai"
+var provider: String = "groq" # "custom", "groq", "openrouter", "openai", "deepseek", "local", "builtin"
+var base_url: String = "https://api.groq.com/openai/v1/chat/completions"
 var model_name: String = "llama-3.3-70b-versatile"
+var custom_system_prompt: String = ""
 
 var http_request: HTTPRequest
+var test_http_request: HTTPRequest
 var is_requesting: bool = false
+var is_testing: bool = false
+
+var active_companion_name: String = "Camellya"
 
 var conversation_history: Array = [
-	{"role": "system", "content": "You are Lumina, a charming, witty anime desktop companion. Respond warmly in 30 words or less. Always stay in character."}
+	{"role": "system", "content": "You are Camellya, an affectionate, charming anime desktop companion. Respond warmly in 35 words or less. Always stay in character."}
 ]
 
 func _ready() -> void:
 	http_request = HTTPRequest.new()
-	http_request.timeout = 12.0
+	http_request.timeout = 15.0
 	add_child(http_request)
 	http_request.request_completed.connect(_on_http_completed)
+
+	test_http_request = HTTPRequest.new()
+	test_http_request.timeout = 10.0
+	add_child(test_http_request)
+	test_http_request.request_completed.connect(_on_test_http_completed)
+
 	load_config()
+
+func set_companion_name(name: String) -> void:
+	active_companion_name = name
+	var sys_prompt = custom_system_prompt
+	if sys_prompt.strip_edges().is_empty():
+		sys_prompt = "You are %s, an affectionate, charming anime desktop companion. Respond warmly in 35 words or less. Always stay in character." % name
+	if conversation_history.size() > 0 and conversation_history[0]["role"] == "system":
+		conversation_history[0]["content"] = sys_prompt
+	else:
+		conversation_history.insert(0, {"role": "system", "content": sys_prompt})
 
 func load_config() -> void:
 	var path := "user://config.json"
@@ -34,8 +56,11 @@ func load_config() -> void:
 			if parsed is Dictionary:
 				api_key = parsed.get("api_key", "")
 				provider = parsed.get("provider", "groq")
-				base_url = parsed.get("base_url", "https://api.groq.com/openai")
+				base_url = parsed.get("base_url", "https://api.groq.com/openai/v1/chat/completions")
 				model_name = parsed.get("model_name", "llama-3.3-70b-versatile")
+				custom_system_prompt = parsed.get("custom_system_prompt", "")
+				if not custom_system_prompt.is_empty() and conversation_history.size() > 0:
+					conversation_history[0]["content"] = custom_system_prompt
 
 func save_config() -> void:
 	var path := "user://config.json"
@@ -45,23 +70,88 @@ func save_config() -> void:
 			"api_key": api_key,
 			"provider": provider,
 			"base_url": base_url,
-			"model_name": model_name
+			"model_name": model_name,
+			"custom_system_prompt": custom_system_prompt
 		}
 		file.store_string(JSON.stringify(data, "  "))
+
+func get_clean_endpoint(url: String) -> String:
+	var clean := url.strip_edges()
+	if clean.is_empty():
+		return "https://api.groq.com/openai/v1/chat/completions"
+	clean = clean.trim_suffix("/")
+	if not clean.ends_with("/chat/completions"):
+		if clean.ends_with("/v1"):
+			clean += "/chat/completions"
+		else:
+			clean += "/v1/chat/completions"
+	return clean
+
+func test_api_connection(test_url: String, test_model: String, test_key: String) -> void:
+	if is_testing:
+		return
+	is_testing = true
+
+	var endpoint := get_clean_endpoint(test_url)
+	var headers: PackedStringArray = [
+		"Content-Type: application/json"
+	]
+	if not test_key.strip_edges().is_empty():
+		headers.append("Authorization: Bearer " + test_key.strip_edges())
+	if "openrouter.ai" in endpoint:
+		headers.append("HTTP-Referer: https://desktop-companion.local")
+		headers.append("X-Title: DesktopCompanion")
+
+	var test_payload := {
+		"model": test_model.strip_edges() if not test_model.strip_edges().is_empty() else "llama-3.3-70b-versatile",
+		"messages": [
+			{"role": "user", "content": "Respond with 1 word: Ready"}
+		],
+		"max_tokens": 8,
+		"temperature": 0.2
+	}
+
+	var err := test_http_request.request(endpoint, headers, HTTPClient.METHOD_POST, JSON.stringify(test_payload))
+	if err != OK:
+		is_testing = false
+		test_completed.emit(false, "Failed to start HTTP request (Error %d)" % err)
+
+func _on_test_http_completed(result: int, response_code: int, _headers: PackedStringArray, body: PackedByteArray) -> void:
+	is_testing = false
+	if result != HTTPRequest.RESULT_SUCCESS:
+		test_completed.emit(false, "Network error: Connection timed out or unreachable")
+		return
+
+	if response_code == 200:
+		var text_body := body.get_string_from_utf8()
+		var parsed = JSON.parse_string(text_body)
+		if parsed is Dictionary and parsed.has("choices"):
+			test_completed.emit(true, "Connected successfully! API responded OK.")
+		else:
+			test_completed.emit(true, "HTTP 200 received from endpoint.")
+	elif response_code == 401:
+		test_completed.emit(false, "Error 401: Invalid or missing API key")
+	elif response_code == 404:
+		test_completed.emit(false, "Error 404: Endpoint URL or model name not found")
+	elif response_code == 429:
+		test_completed.emit(false, "Error 429: Rate limit exceeded or quota reached")
+	else:
+		test_completed.emit(false, "Error %d returned from API" % response_code)
 
 func send_message(user_text: String) -> void:
 	if is_requesting:
 		return
-		
+
 	user_text = user_text.strip_edges()
 	if user_text.is_empty():
 		return
 
-	# If no API key configured, use our built-in Smart Companion Dialogue Engine!
-	if api_key.is_empty():
+	# If provider is explicitly built-in or no API key and not a local endpoint, use built-in dialogue engine
+	var endpoint := get_clean_endpoint(base_url)
+	var is_local := "localhost" in endpoint or "127.0.0.1" in endpoint
+	if provider == "builtin" or (api_key.strip_edges().is_empty() and not is_local):
 		thinking_started.emit()
-		# Add a realistic tiny delay so it feels natural
-		get_tree().create_timer(0.4).timeout.connect(func():
+		get_tree().create_timer(0.35).timeout.connect(func():
 			_handle_smart_dialogue(user_text)
 		)
 		return
@@ -73,23 +163,23 @@ func send_message(user_text: String) -> void:
 	if conversation_history.size() > 10:
 		conversation_history.remove_at(1)
 
-	var endpoint := base_url.trim_suffix("/") + "/v1/chat/completions"
 	var headers: PackedStringArray = [
-		"Content-Type: application/json",
-		"Authorization: Bearer " + api_key
+		"Content-Type: application/json"
 	]
-	
-	if provider == "openrouter":
+	if not api_key.strip_edges().is_empty():
+		headers.append("Authorization: Bearer " + api_key.strip_edges())
+
+	if provider == "openrouter" or "openrouter.ai" in endpoint:
 		headers.append("HTTP-Referer: https://desktop-companion.local")
 		headers.append("X-Title: DesktopCompanion")
-		
+
 	var payload := {
-		"model": model_name,
+		"model": model_name.strip_edges() if not model_name.strip_edges().is_empty() else "llama-3.3-70b-versatile",
 		"messages": conversation_history,
 		"max_tokens": 120,
 		"temperature": 0.7
 	}
-	
+
 	var err := http_request.request(endpoint, headers, HTTPClient.METHOD_POST, JSON.stringify(payload))
 	if err != OK:
 		is_requesting = false
@@ -97,9 +187,8 @@ func send_message(user_text: String) -> void:
 
 func _on_http_completed(result: int, response_code: int, _headers: PackedStringArray, body: PackedByteArray) -> void:
 	is_requesting = false
-	
+
 	if result != HTTPRequest.RESULT_SUCCESS or response_code != 200:
-		# Fall back gracefully to local companion dialogue instead of breaking the immersion
 		var last_user_turn: String = ""
 		for msg in conversation_history:
 			if msg["role"] == "user":
@@ -124,8 +213,7 @@ func _on_http_completed(result: int, response_code: int, _headers: PackedStringA
 		return
 
 	conversation_history.append({"role": "assistant", "content": reply})
-	
-	# Detect sentiment for facial expression
+
 	var expression := _detect_expression(reply)
 	reply_received.emit(reply.strip_edges(), expression)
 
@@ -139,7 +227,6 @@ func _detect_expression(text: String) -> String:
 		return "angry"
 	return "neutral"
 
-# Built-in instant companion response engine (Zero setup required for end users!)
 func _handle_smart_dialogue(user_text: String) -> void:
 	var lower := user_text.to_lower().strip_edges()
 	var reply := ""
@@ -148,55 +235,31 @@ func _handle_smart_dialogue(user_text: String) -> void:
 	if lower in ["hi", "hello", "hey", "sup", "yo"]:
 		var greetings = [
 			"Hey there! Ready to get some work done together?",
-			"Hello master! I'm right here keeping you company.",
-			"Hi! Need any help or just saying hello?"
+			"Hello! Glad you're here beside me.",
+			"Hi! How are you feeling today?"
 		]
-		reply = greetings.pick_random()
+		reply = greetings[randi() % greetings.size()]
+		expression = "happy"
+	elif "how are you" in lower:
+		reply = "I'm feeling wonderful, especially now that you're hanging out with me! ♡"
+		expression = "happy"
+	elif "thank" in lower:
+		reply = "You're always so welcome! I love helping you out. (*^‿^*)"
+		expression = "happy"
+	elif "what are you doing" in lower or "what's up" in lower:
+		reply = "Just keeping you company and watching you do great things!"
 		expression = "neutral"
-	elif "who are you" in lower or "your name" in lower:
-		reply = "I'm Lumina, your personal desktop companion! I live in the corner of your screen to keep you focused and happy."
-		expression = "inlove"
-	elif "love you" in lower or "cute" in lower or "pretty" in lower:
-		reply = "Aww, you're making me blush! (⁄ ⁄>⁄ ▽ ⁄<⁄ ⁄) Thank you!"
-		expression = "inlove"
-	elif "time" in lower or "what time" in lower:
-		var time := Time.get_time_dict_from_system()
-		var hour: int = time.hour
-		var minute: int = time.minute
-		var ampm = "AM" if hour < 12 else "PM"
-		var display_hour = hour % 12
-		if display_hour == 0: display_hour = 12
-		reply = "It's %02d:%02d %s! Remember to take water breaks!" % [display_hour, minute, ampm]
-		expression = "neutral"
-	elif "date" in lower or "today" in lower:
-		var date := Time.get_date_dict_from_system()
-		reply = "Today is %04d-%02d-%02d! Let's make it a productive day!" % [date.year, date.month, date.day]
-		expression = "neutral"
-	elif "joke" in lower:
-		var jokes = [
-			"Why do programmers prefer dark mode? Because light attracts bugs!",
-			"There are 10 types of people in the world: those who understand binary, and those who don't.",
-			"Why was the JavaScript developer sad? Because they didn't Node how to Express themselves!"
-		]
-		reply = jokes.pick_random()
-		expression = "inlove"
-	elif "sad" in lower or "tired" in lower or "exhausted" in lower:
-		reply = "I'm sorry you're feeling down. Take a deep breath, stretch your arms, and take it one step at a time. I'm right here with you."
-		expression = "sad"
-	elif "bye" in lower or "quit" in lower or "exit" in lower:
-		reply = "Press ESC anytime if you need to dismiss me. I'll be waiting for you!"
-		expression = "neutral"
-	elif "ai" in lower or "api" in lower or "key" in lower or "groq" in lower or "settings" in lower:
-		reply = "To unlock full unlimited LLM chat, click the ⚙ Settings button and paste a free Groq or OpenRouter API key!"
-		expression = "neutral"
+	elif "tired" in lower or "sleepy" in lower:
+		reply = "You've worked so hard... please rest your eyes and grab some water, okay? ♡"
+		expression = "shy"
 	else:
-		var fallbacks = [
-			"I hear you! You can chat with me, or paste an API key in settings for unlimited AI thoughts.",
-			"Interesting thought! I'm currently running in standalone companion mode.",
-			"Got it! Let me know if you want to set a reminder or just talk.",
-			"Working alongside you is always fun!"
+		var default_replies = [
+			"I hear you! Let's stay focused and make today amazing.",
+			"That's interesting! I'm right here with you every step of the way.",
+			"You got this! Take a deep breath and keep going. ✨",
+			"I'm listening! Tell me more whenever you feel like chatting."
 		]
-		reply = fallbacks.pick_random()
+		reply = default_replies[randi() % default_replies.size()]
 		expression = "neutral"
 
 	reply_received.emit(reply, expression)

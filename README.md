@@ -27,7 +27,8 @@ An interactive, transparent, borderless anime desktop companion built with Godot
 - **Multi-Zone Poke & Tap Interactions:** Contextual reactions for head strokes (blush & hearts), torso tickles (sparkles), and feet stretches (hop bounce).
 - **Scale Presets (Compact / Standard / Large):** 85%, 100%, and 118% display scaling to fit 1080p, 1440p, or 4K monitors without distortion.
 - **Ergonomic & Hydration Alerts:** 45-minute posture and hydration check-ins to keep you refreshed while working.
-- **AI Chat Client:** Multi-provider integration supporting Groq (fast & free), OpenRouter, OpenAI, and local backends.
+- **Visual Novel Pill Action HUD:** Clean unoccluded anime companion view with 9 authentic pill capsule action buttons (`✦ Action ˣ`).
+- **Any AI API of Choice:** Universal OpenAI-compatible API engine. Connect any provider (Groq, OpenRouter, OpenAI, DeepSeek, Local LM Studio / vLLM, or custom endpoint URL), enter any model name, and test the connection live with the built-in ⚡ Test Connection tool. Offline fallback is built-in so no setup is required.
 
 ## 🎮 Controls
 | Action | Input |
