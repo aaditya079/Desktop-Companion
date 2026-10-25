@@ -36,6 +36,7 @@ namespace DesktopCompanionLauncher
             singleInstanceMutex = new Mutex(true, "DesktopCompanion_TrayLauncher_Mutex", out createdNew);
             if (!createdNew)
             {
+                SendCommand("RESET_POSITION");
                 SendCommand("SHOW_WINDOW");
                 return;
             }
@@ -46,6 +47,11 @@ namespace DesktopCompanionLauncher
                 if (StartCompanionEngine())
                 {
                     StartWindowTracker();
+                    try
+                    {
+                        trayIcon.ShowBalloonTip(3000, "Desktop Companion", "✦ Desktop Companion is now running!\nLook for me on the bottom right of your desktop.", ToolTipIcon.Info);
+                    }
+                    catch { }
                     Application.Run();
                 }
             }
@@ -199,13 +205,13 @@ namespace DesktopCompanionLauncher
             try
             {
                 // Kill any existing stale companion processes
-                foreach (var p in Process.GetProcessesByName("Godot_v4.7.2-stable_win64"))
+                string[] staleNames = new string[] { "Godot_v4.7.2-stable_win64", "Godot_v4.7.2-stable_win64_console", "DesktopCompanionRuntime", "Godot" };
+                foreach (var name in staleNames)
                 {
-                    try { p.Kill(); } catch { }
-                }
-                foreach (var p in Process.GetProcessesByName("Godot_v4.7.2-stable_win64_console"))
-                {
-                    try { p.Kill(); } catch { }
+                    foreach (var p in Process.GetProcessesByName(name))
+                    {
+                        try { p.Kill(); } catch { }
+                    }
                 }
 
                 var psi = new ProcessStartInfo();
@@ -345,6 +351,13 @@ namespace DesktopCompanionLauncher
         [DllImport("user32.dll")]
         private static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
 
+        public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+        [DllImport("user32.dll")]
+        private static extern bool EnumWindows(EnumWindowsProc enumProc, IntPtr lParam);
+
+        [DllImport("user32.dll")]
+        private static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
+
         private const int DWMWA_EXTENDED_FRAME_BOUNDS = 9;
 
         [StructLayout(LayoutKind.Sequential)]
@@ -367,8 +380,16 @@ namespace DesktopCompanionLauncher
             windowTrackerTimer = new System.Threading.Timer(TrackForegroundWindow, null, 1200, 200);
         }
 
+        private static int trackerTick = 0;
+
         private static void TrackForegroundWindow(object state)
         {
+            trackerTick++;
+            if (trackerTick % 5 == 0)
+            {
+                EnforceTopMost();
+            }
+
             if (!isPerchEnabled) return;
 
             try
@@ -448,6 +469,27 @@ namespace DesktopCompanionLauncher
             {
                 // Never crash the background thread
             }
+        }
+
+        private static void EnforceTopMost()
+        {
+            try
+            {
+                if (engineProcess == null || engineProcess.HasExited) return;
+                uint pid = (uint)engineProcess.Id;
+
+                EnumWindows((hWnd, lParam) =>
+                {
+                    uint p;
+                    GetWindowThreadProcessId(hWnd, out p);
+                    if (p == pid && IsWindowVisible(hWnd))
+                    {
+                        SetWindowPos(hWnd, new IntPtr(-1), 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010 | 0x0040);
+                    }
+                    return true;
+                }, IntPtr.Zero);
+            }
+            catch { }
         }
         #endregion
 

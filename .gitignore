@@ -2,6 +2,10 @@
 .godot/
 *.translation
 
+# Large engine binaries
+bin/*.exe
+bin/*.zip
+
 # System files
 .DS_Store
 Thumbs.db
