@@ -1,0 +1,10 @@
+# Godot 4+ engine cache and imports
+.godot/
+*.translation
+
+# System files
+.DS_Store
+Thumbs.db
+desktop.ini
+*.tmp
+*.log
