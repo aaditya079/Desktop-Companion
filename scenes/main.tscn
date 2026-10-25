@@ -998,7 +998,7 @@ text = "🌍 Drop: ON"
 layout_mode = 2
 size_flags_horizontal = 3
 theme_override_font_sizes/font_size = 10
-text = "🔊 Sound: ON"
+text = "🔇 Sound: OFF"
 
 [node name="Divider" type="HSeparator" parent="UI/SettingsPanel/Margin/VBox"]
 layout_mode = 2

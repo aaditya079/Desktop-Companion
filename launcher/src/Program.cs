@@ -79,7 +79,7 @@ namespace DesktopCompanionLauncher
             var outfitItem = new ToolStripMenuItem("👗 Next Outfit / Model", null, (s, e) => SendCommand("NEXT_MODEL"));
             var gravityItem = new ToolStripMenuItem("🌍 Toggle Gravity (Drop / Float)", null, (s, e) => SendCommand("TOGGLE_GRAVITY"));
             var focusItem = new ToolStripMenuItem("⏱ Pomodoro Focus Timer (25m)", null, (s, e) => SendCommand("TOGGLE_FOCUS"));
-            var soundItem = new ToolStripMenuItem("🔊 Toggle Sound Effects", null, (s, e) => SendCommand("TOGGLE_SOUND"));
+            var soundItem = new ToolStripMenuItem("🔇 Sound Effects: OFF", null, (s, e) => SendCommand("TOGGLE_SOUND"));
 
             trayMenu.Items.Add(showItem);
             trayMenu.Items.Add(headpatItem);

@@ -92,7 +92,7 @@ var ambient_timer: float = 90.0
 @onready var close_x_btn: Button = $UI/SettingsPanel/Margin/VBox/HeaderHBox/CloseX
 
 var gravity_enabled: bool = true
-var sound_enabled: bool = true
+var sound_enabled: bool = false
 var current_scale_multiplier: float = 1.0
 
 # OS Window Topology & Perching Engine
@@ -340,14 +340,6 @@ func _ready() -> void:
 	btn_comfort.pressed.connect(_on_btn_comfort)
 	btn_memory.pressed.connect(_on_btn_memory)
 	btn_settings.pressed.connect(_on_btn_settings)
-
-	# Hover audio feedback for pill buttons
-	for child in pill_menu.get_node("VBox").get_children():
-		if child is Button:
-			child.mouse_entered.connect(func():
-				if sound_enabled:
-					play_sfx("pop")
-			)
 
 	# Connect Note Popup Buttons
 	btn_save_note.pressed.connect(_save_note)
@@ -654,7 +646,7 @@ func _toggle_perch() -> void:
 
 func _toggle_sound() -> void:
 	sound_enabled = not sound_enabled
-	btn_sound.text = "🔊 Sound Effects: ON" if sound_enabled else "🔇 Sound Effects: OFF"
+	btn_sound.text = "🔊 Sound: ON" if sound_enabled else "🔇 Sound: OFF"
 	say("Sound effects " + ("ON" if sound_enabled else "OFF") + "!", "neutral")
 	if sound_enabled: play_sfx("chime")
 
@@ -1275,8 +1267,6 @@ func _trigger_landing_bounce() -> void:
 	tween.tween_property(target_node, "scale", Vector2(base_scale.x * 0.97, base_scale.y * 1.03), 0.12).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
 	tween.tween_property(target_node, "scale", base_scale, 0.1).set_trans(Tween.TRANS_SINE)
 
-	play_sfx("pop")
-
 	if sparkle_particles:
 		sparkle_particles.position = Vector2(160, 680)
 		sparkle_particles.restart()
@@ -1424,8 +1414,6 @@ func say(text: String, _expression: String = "neutral") -> void:
 	var tween = create_tween().set_parallel(true)
 	tween.tween_property(bubble_panel, "modulate:a", 1.0, 0.16)
 	tween.tween_property(bubble_container, "scale", Vector2.ONE, 0.22).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
-
-	play_sfx("pop")
 
 	bubble_hide_timer = max(5.0, text.length() * 0.09)
 	is_speaking = true
@@ -1671,7 +1659,6 @@ func _trigger_ambient_behavior() -> void:
 			"Taking a quick pause? A short stretch can recharge your focus! ✦"
 		]
 		say(lunch_quotes.pick_random(), "neutral")
-		play_sfx("pop")
 	else:
 		var idle_quotes = [
 			"Watching you concentrate always motivates me! Keep going! ✨",
@@ -1680,7 +1667,6 @@ func _trigger_ambient_behavior() -> void:
 			"Remember: unclench your jaw, relax your shoulders, and breathe easy~ (*^‿^*)"
 		]
 		say(idle_quotes.pick_random(), "neutral")
-		play_sfx("pop")
 
 # ==============================================================================
 # Procedural Audio Synthesizer (Zero external dependencies)
